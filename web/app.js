@@ -281,6 +281,21 @@ function materialRow(t,m,p) {
   <td style="min-width:210px"><div style="display:grid;gap:6px"><select data-k="person"><option value="">未确定</option>${p.people.map(x=>`<option ${m.person===x?'selected':''}>${e(x)}</option>`).join('')}</select><select data-k="indicator"><option value="">不对应任何指标</option>${p.scheme.indicators.map(i=>`<option value="${e(i.id)}" ${m.indicator===i.id?'selected':''}>${e(i.name)}</option>`).join('')}</select>${open||m.accepted?`<label class="check"><input type="checkbox" data-k="accepted" ${m.accepted?'checked':''}>已核实，计分</label>`:''}<label class="check"><input type="checkbox" data-k="excluded" ${m.excluded?'checked':''}>不计入</label><input type="text" data-k="note" placeholder="核实情况或不计入的原因" maxlength="300" value="${e(m.note||'')}"><details${m.flags.some(f=>f.startsWith('材料类型')||f.startsWith('级别'))?' open':''}><summary><small class="muted">修正识别结果</small></summary><div style="display:grid;gap:6px;margin-top:6px"><input type="text" data-k="doc_type" value="${e(m.doc_type)}" maxlength="40" placeholder="材料类型"><input type="text" data-k="level" value="${e(m.level)}" maxlength="30" placeholder="级别，如省级"><input type="text" data-k="project" value="${e(m.project)}" maxlength="120" placeholder="项目/论文题目（相同的合并为 1 项）"></div></details></div></td></tr>`;
 }
 
+// Which materials are the same achievement: both side by side, who decided it and on what evidence; every one can be changed.
+const PAIR_FIELDS=[['cert_no','编号'],['contest','比赛'],['edition','届次'],['project','作品/题目'],['award','获奖等级'],['level','级别'],['students','学生'],['date','日期']];
+function relationsSection(t,p) {
+  const list=p.relations||[];
+  if(!list.length)return '';
+  const by={rule:['程序规则',''],model:['模型判断','blue'],evaluator:['你改过','green'],none:['模型没有判断','amber']};
+  const open=list.filter(r=>r.relation==='unsure').length;
+  const row=r=>{const [a,b]=r.pair;return `<tr data-relation-row="${e(r.key)}"${r.relation==='unsure'?' style="background:var(--amber-soft)"':''}><td style="white-space:normal;min-width:330px"><table style="font-size:13px"><thead><tr><th></th><th>${a.index!=null?sourceLink(t,{index:a.index,file:a.file}):e(a.file)}</th><th>${b.index!=null?sourceLink(t,{index:b.index,file:b.file}):e(b.file)}</th></tr></thead><tbody>${PAIR_FIELDS.filter(([k])=>a[k]||b[k]).map(([k,l])=>`<tr><td class="muted">${l}</td><td>${e(a[k])}</td><td>${e(b[k])}</td><td>${a[k]&&b[k]?(a[k]===b[k]?'<span style="color:var(--teal)">✓</span>':'<span style="color:var(--amber)">✗</span>'):''}</td></tr>`).join('')}</tbody></table></td>
+  <td style="white-space:normal;min-width:260px"><select data-relation="${e(r.key)}" data-was="${e(r.relation)}">${Object.entries(p.relation_words).map(([k,l])=>`<option value="${k}" ${r.relation===k?'selected':''}>${e(l)}</option>`).join('')}</select><div style="margin-top:6px">${badge(...(by[r.by]||[r.by,'']))} <small>${e(r.reason)}</small></div>${quoteList(r.evidence)}</td></tr>`;};
+  return `<section class="card"><div class="card-head"><h2>可能重复的材料</h2><small class="muted">${list.length} 组 · 证据确定的由程序判断，其余由模型判断并给出原文依据，都可以改${open?` · <b style="color:var(--amber)">${open} 组需要你判断</b>`:''}</small></div><div class="table-wrap"><table><tbody>${list.map(row).join('')}</tbody></table></div></section>`;
+}
+function schemeQuestions(p) {
+  return (p.questions||[]).map(q=>`<section class="review-card" data-scheme-question="${e(q.id)}"><div><b>问题：</b>${e(q.question)}</div><div><b>需要：</b>${e(q.need)}</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">${Object.entries(q.options).map(([k,l])=>`<label class="check"><input type="radio" name="sq-${e(q.id)}" value="${k}"> ${e(l)}</label>`).join('')}</div></section>`).join('');
+}
+
 function appraisalConfirm(t,p) {
   if(p.scheme_changed) return `<form id="confirm-form" data-kind="appraisal"><section class="card" id="rule-section">${schemeSection(p)}</section><div class="review-submit"><small>确认后按新指标重新整理材料。</small><button class="button primary" type="submit">按新指标重新整理 ${icon('arrow')}</button></div></form>`;
   const byState=k=>p.materials.filter(m=>(m.status||'counted')===k),proof=byState('needs_proof');
@@ -291,6 +306,8 @@ function appraisalConfirm(t,p) {
   return `<form id="confirm-form" data-kind="appraisal">
   <div class="notice">${p.people.length} 人、${p.materials.length} 份材料已整理完毕：${Object.entries(MATERIAL_STATES).map(([k,[l,c]])=>`${badge(l+' '+byState(k).length,c)}`).join(' ')}<br>${proof.length?`<b>${proof.length}</b> 份材料需要补充证明或核实，请逐份决定“已核实，计分”或“不计入”；`:''}${toScore.length?`<b>${toScore.length}</b> 项评价类指标需要你打分（模型建议只供参考，不会自动填入）；`:''}可以计分的材料由程序按方案算分。</div>
   <section class="card" id="rule-section">${schemeSection(p)}</section>
+  ${(p.questions||[]).length?`<section class="card"><div class="card-head"><h2>方案没说清的计分方式</h2>${badge('请选择','amber')}</div><div class="card-body review-area">${schemeQuestions(p)}</div></section>`:''}
+  ${relationsSection(t,p)}
   ${toScore.length?`<section class="card"><div class="card-head"><h2>需要你打分</h2><small class="muted">${toScore.length} 项 · 建议只依据方案中的标准和材料原文</small></div><div class="card-body review-area">${byPerson.map(([person,list])=>`<section class="review-card"><div class="review-head"><span class="review-number">${e(person.slice(0,1))}</span><div><strong>${e(person)}</strong></div></div><div class="table-wrap"><table><tbody>${list.map(judgeRow).join('')}</tbody></table></div></section>`).join('')}</div></section>`:''}
   ${proof.length?`<section class="card"><div class="card-head"><h2>需要补充证明的材料</h2><small class="muted">${proof.length} 份 · 材料没写清，系统不能直接计分</small></div>${table(proof)}</section>`:''}
   ${[['ineligible','不符合条件的材料','按材料写的内容不满足方案条件，不计分；判断错了可以改为“已核实，计分”'],['judge','待人工评分的材料','对应评价类指标，请在上面打分时参考'],['counted','可以计分的材料','满足方案条件，由程序计分']].map(([k,title,sub])=>byState(k).length?`<details class="card"${k==='ineligible'?' open':''}><summary class="card-head" style="cursor:pointer"><h2>${title}</h2><small class="muted">${byState(k).length} 份 · ${sub}</small></summary>${table(byState(k))}</details>`:'').join('')}
@@ -580,6 +597,8 @@ function collectConfirm(form) {
   });
   payload.fills=$$('[data-fill]',form).filter(input=>input.value.trim()).map(input=>({...JSON.parse(input.dataset.fill),value:input.value.trim()}));
   $$('[data-material]',form).forEach(row=>{const v=k=>$(`[data-k="${k}"]`,row);payload.materials[row.dataset.material]={person:v('person').value,indicator:v('indicator').value,excluded:v('excluded').checked,note:v('note').value,doc_type:v('doc_type').value,level:v('level').value,project:v('project').value,...(v('accepted')?{accepted:v('accepted').checked}:{})};});
+  payload.relations={};$$('[data-relation]',form).forEach(s=>{if(s.value!==s.dataset.was)payload.relations[s.dataset.relation]=s.value;});
+  payload.scheme_answers={};$$('[data-scheme-question]',form).forEach(card=>{const picked=$('input[type=radio]:checked',card);if(picked)payload.scheme_answers[card.dataset.schemeQuestion]=picked.value;});
   $$('[data-judge]',form).forEach(row=>{const score=$('[data-k="score"]',row).value;if(score!=='')payload.judgements[row.dataset.judge]={score:Number(score),note:$('[data-k="note"]',row).value};});
   return payload;
 }

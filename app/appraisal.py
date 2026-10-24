@@ -20,7 +20,8 @@ SCHEME_INSTRUCTION = '''把考核方案拆成可执行的指标。只返回JSON�
 "points":每项分值数字，或按级别给分的对象如{"省级":2,"国家级":2},"cap":最高分,"unit":"计数单位，如项目、次、篇",
 "required":["必须提供的材料名称"],"deduct":缺一项扣分,
 "criteria":[{"level":"等级名","score":该等级给分,"description":"评价标准"}],"evidence_hint":"可作为证明的材料类型",
-"conditions":["除级别以外、方案写明的计分条件，如“本人为第一作者”“所带学生获奖”“须有活动记录和签到”，没写就空数组"]}],
+"conditions":["除级别以外、方案写明的计分条件，如“本人为第一作者”“所带学生获奖”“须有活动记录和签到”，没写就空数组"],
+"same_work":"同一作品或成果多次获奖、多处刊载（如转载）时怎么计：方案写明只计一次（取最高）填 highest，写明分别计填 each，没写填空字符串"}],
 "period":{"start":"考核时段开始 YYYY-MM-DD","end":"结束 YYYY-MM-DD"}（方案写明考核年度或时段才填，如“2026年度”填 2026-01-01 到 2026-12-31，否则两项都填空字符串）,
 "allow_multi":方案明确允许同一份材料同时计入多个指标时填 true，否则 false,
 "explanation":"你如何理解方案","unclear":["方案没说清、需要评分人确认的地方"]}
@@ -33,6 +34,8 @@ unclear 最多5条、最重要的在前，只写会让不同评分人打出不�
 MATERIAL_INSTRUCTION = '''你在协助考核评分人整理被考核人提交的证明材料。阅读这份材料，返回JSON对象：
 {"person":"材料属于哪位被考核人（people 不为空时只能从 people 中选，判断不了填空字符串；people 为空时写材料中写明的被考核人姓名）","doc_type":"材料类型，尽量使用 indicators 中 required 列出的名称，否则如“获奖证书”“讲座通知”“论文”",
 "title":"材料标题","event":"所指的比赛、活动、论文或工作名称（证书写比赛名称）","project":"作品/项目/论文题目（没有则空）",
+"cert_no":"证书编号、发文号、DOI 或期刊卷期页码（原文照录，没有则空）","contest":"比赛全称（不是比赛则空）","edition":"届次或年度，如第十八届、2026年（没有则空）",
+"award":"获奖等级，如一等奖、金奖、优秀奖（没有则空）","students":["获奖或参与的学生姓名，材料写了才填"],"issuer":"颁发或发布单位（没有则空）",
 "level":"级别或档次，如校级、市级、省级、国家级、核心期刊、CN期刊（没有则空）","date":"日期（原文写法）",
 "indicators":[{"id":"指标id","reason":"为什么能支撑该指标"}],"summary":"不超过80字的客观摘要",
 "role":"被考核人在其中的角色或排名（如组织者、指导教师、第一作者、第2完成人），材料没写就空字符串",
@@ -81,6 +84,7 @@ def normalize_scheme(draft):
             conditions = [conditions]
         indicators.append({
             'conditions': [text(c)[:120] for c in conditions if text(c)][:5],
+            'same_work': item.get('same_work') if item.get('same_work') in ('highest', 'each') else '',
             'id': text(item.get('id')) or f'I{index}', 'group': text(item.get('group'))[:40], 'name': text(item.get('name'))[:60],
             'max': number(item.get('max'), 0), 'method': method, 'points': points, 'cap': number(item.get('cap')),
             'unit': text(item.get('unit'))[:20], 'required': [text(x) for x in required if text(x)][:10],
@@ -114,7 +118,8 @@ def describe_indicator(item):
         unit = re.split(r'[（(，,;；]', item['unit'] or '')[0][:4] or '项'  # the model sometimes writes whole notes into the unit
         each = '；'.join(f'{k}每{unit} {v:g} 分' for k, v in points.items()) if isinstance(points, dict) else f'每{unit} {points or 0:g} 分'
         cap = item['cap'] if item['cap'] is not None else item['max']
-        return f'{head}：{each}，最高 {cap:g} 分；同一项目或活动的多份材料只算一次。' + conditions_text(item)
+        same = {'highest': '同一成果多次获奖或刊载只计最高一次', 'each': '同一成果每次获奖或刊载分别计分'}.get(item.get('same_work'), '')
+        return f'{head}：{each}，最高 {cap:g} 分；同一奖项的多份材料只算一次' + (f'，{same}' if same else '') + '。' + conditions_text(item)
     if item['method'] == 'checklist':
         deduct = f'缺一项扣 {item["deduct"]:g} 分' if item['deduct'] is not None else '按提交比例计分'
         return f'{head}：须提交{"、".join(item["required"])}，{deduct}。' + conditions_text(item)
@@ -296,16 +301,24 @@ def covers(required, doc_type):
     return bool(doc_type) and (required in doc_type or doc_type in required)
 
 
-def material_flags(materials, people, indicators, scheme=None):
+RELATION_WORDS = {'same_award': '同一奖项，只计一次', 'same_work': '同一成果的不同奖项或刊载', 'unsure': '是否重复需要你确认'}
+
+
+def material_flags(materials, people, indicators, scheme=None, relations=None):
     """Warnings shown next to each material during the evaluator's assignment check."""
     ids = {i['id']: i for i in indicators}
     claims = cross_claims(materials, indicators)
     scheme = scheme or {}
-    twins = suspected_duplicates(materials)
+    twins = suspected_duplicates(materials) if relations is None else {}
+    files = {m['id']: m['file'] for m in materials}
     for m in materials:
         m['status'], m['reasons'] = material_status(m, ids, people, scheme, claims)
         if twins.get(m['id']):
             m['reasons'] = m['reasons'] + [f'可能与 {"、".join(twins[m["id"]])} 是同一成果；如果是，把两份的“项目/论文题目”改成一样，只算一次']
+        for r in relations or []:
+            if m['id'] in (r['a'], r['b']) and r['relation'] != 'different':
+                other = files.get(r['b'] if r['a'] == m['id'] else r['a'], '')
+                m['reasons'] = m['reasons'] + [f'与“{other}”：{RELATION_WORDS[r["relation"]]}（{r["reason"]}）']
         if m.get('also') and ids.get(m.get('indicator')):
             names = '、'.join(ids[x]['name'] for x in m['also'] if x in ids)
             if names:
@@ -334,7 +347,7 @@ def material_flags(materials, people, indicators, scheme=None):
     return materials
 
 
-def score_person(person, indicators, materials, judgements=None, suggestions=None, allow_multi=False):
+def score_person(person, indicators, materials, judgements=None, suggestions=None, allow_multi=False, relations=None):
     """Score one person. Count and checklist items are computed from materials that can be counted (a material whose
     state is unknown, e.g. read before states existed, counts as before); an item with a material still needing proof
     waits for the evaluator. Judge items come from the evaluator's decisions."""
@@ -350,11 +363,20 @@ def score_person(person, indicators, materials, judgements=None, suggestions=Non
         entry = {'id': item['id'], 'group': item['group'], 'name': item['name'], 'max': item['max'], 'method': item['method'],
                  'materials': [m['id'] for m in linked], 'score': None, 'how': '', 'events': [], 'waiting': [m['id'] for m in waiting], 'left_out': left_out}
         if item['method'] == 'count':
-            events = defaultdict(list)
-            for m in linked:
-                events[event_key(m)].append(m)
+            if relations is None:  # read before relations existed: the old grouping by the same project title
+                events = defaultdict(list)
+                for m in linked:
+                    events[event_key(m)].append(m)
+                found = list(events.values())
+            else:
+                from .dedupe import groups
+                found, held = groups(linked, relations, item.get('same_work', ''))
+                if held:
+                    waiting = waiting + [{'id': f'relation:{item["id"]}'}]
+                    entry['waiting_reasons'] = held
             score, notes = 0.0, []
-            for _, group in events.items():
+            events = found
+            for group in found:
                 values = [level_points(item, m.get('level')) for m in group]
                 counted = [v for v in values if v is not None]
                 best = max(counted) if counted else None
@@ -389,7 +411,7 @@ def score_person(person, indicators, materials, judgements=None, suggestions=Non
                 entry['how'] = '等待评分人评定' + ('（已有建议等级）' if (entry['suggestion'] or {}).get('score') is not None else '')
                 pending.append(item['id'])
         if waiting:
-            entry['how'] = f'有 {len(waiting)} 份材料需要补充证明或核实，决定后再算（目前按已确认的材料为 {round(entry["score"] or 0, 2):g} 分）'
+            entry['how'] = '；'.join(entry.get('waiting_reasons') or [f'有 {len(waiting)} 份材料需要补充证明或核实']) + f'，决定后再算（目前按已确认的材料为 {round(entry["score"] or 0, 2):g} 分）'
             pending.append(item['id'])
         if entry['score'] is not None:
             entry['score'] = round(entry['score'], 2)

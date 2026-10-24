@@ -89,11 +89,11 @@ def test_a_material_needing_proof_must_be_decided_before_confirming(monkeypatch)
         assert '没写级别' in reasons.pop('王敏_获奖证书_数学建模国赛.png')
         assert reasons and all('多人申报' in r for r in reasons.values())  # the planted 挑战杯 project claimed by two people
         judgements = {f'{p}::I1': {'score': 8} for p in ('王敏', '李强', '赵琳')}
-        refused = client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements})
+        refused = client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements, 'scheme_answers': {'I9': 'highest'}})
         assert refused.status_code == 400 and '补充证明' in refused.json()['detail']
         decided = {m['id']: {'accepted': True, 'note': '核对原件为国家级', 'level': '国家级'} if '数学建模' in m['file'] else
                    {'excluded': True, 'note': '项目归王敏'} if m['file'].startswith('李强') else {} for m in proof}
-        assert client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements, 'materials': decided}).status_code == 200
+        assert client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements, 'materials': decided, 'scheme_answers': {'I9': 'highest'}}).status_code == 200
         task = wait(client, tid)
         assert task['status'] == 'completed'
         wang = next(r for r in task['result']['results'] if r['person'] == '王敏')

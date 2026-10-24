@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import appraisal, appraisal_flow, documents, export_xlsx, grades, intake, model, scoring, store, versions, workflow
+from . import appraisal, appraisal_flow, dedupe, documents, export_xlsx, grades, intake, model, scoring, store, versions, workflow
 from . import uploads as uploads_mod
 
 pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='b7-task')
@@ -501,6 +501,8 @@ class ReviewPayload(BaseModel):
     fills: list[Fill] = Field(default_factory=list)
     materials: dict = Field(default_factory=dict)
     judgements: dict = Field(default_factory=dict)
+    relations: dict = Field(default_factory=dict)
+    scheme_answers: dict = Field(default_factory=dict)
     answers: list[str] = Field(default_factory=list, max_length=10)
     note: str = Field(default='', max_length=1000)
 
@@ -551,6 +553,17 @@ def check_appraisal_confirm(task, pending, value):
         score = appraisal.number(choice.get('score')) if isinstance(choice, dict) else None
         if key not in limits or score is None or not 0 <= score <= limits[key]:
             raise ValueError('评分必须在该指标的满分范围内。')
+    asked = {q['id'] for q in pending.get('questions') or []}
+    if value.scheme_answers.keys() - asked or any(v not in dedupe.SAME_WORK for v in value.scheme_answers.values()):
+        raise ValueError('计分方式的回答不正确。')
+    if asked - value.scheme_answers.keys():
+        raise ValueError('请先选择“同一作品多次获奖”的计分方式。')
+    pairs = {r['key']: r for r in pending.get('relations') or []}
+    if value.relations.keys() - pairs.keys() or any(v not in dedupe.RELATIONS for v in value.relations.values()):
+        raise ValueError('材料关系的修改不正确。')
+    unsure = [r for k, r in pairs.items() if value.relations.get(k, r['relation']) == 'unsure']
+    if unsure:
+        raise ValueError(f'还有 {len(unsure)} 组材料是否重复需要你判断：' + '、'.join(r['key'].replace('|', ' 与 ') for r in unsure[:3]))
     waiting = appraisal_flow.undecided(pending, value.materials)
     if waiting:
         raise ValueError(f'还有 {len(waiting)} 份材料需要补充证明或核实：' + '、'.join(m['file'] for m in waiting[:4]) + ('等' if len(waiting) > 4 else '')

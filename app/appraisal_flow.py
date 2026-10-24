@@ -11,7 +11,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from . import appraisal, documents, export_xlsx, grades, model, store, versions
+from . import appraisal, dedupe, documents, export_xlsx, grades, model, store, versions
 from .workflow import checkpointer, trace
 
 TEXT_SUFFIXES = ('.txt', '.md')
@@ -30,6 +30,8 @@ class AppraisalState(TypedDict, total=False):
     suggestions: dict
     judgements: dict
     result: dict
+    relations: list  # which materials are the same achievement, with the evidence
+    relation_changes: dict  # the evaluator's corrections, keyed by the two file names
     material_changes: dict  # file name -> what the evaluator corrected, applied again when a version reads it anew
     judged_with: dict  # person::indicator -> the materials the score was given on
     baseline: dict
@@ -120,6 +122,8 @@ def read_one(index, file, indicators, people, task_id=None):
             'event': grades.text(response.get('event'))[:120], 'project': grades.text(response.get('project'))[:120],
             'level': grades.text(response.get('level'))[:30], 'date': grades.text(response.get('date'))[:30],
             'role': grades.text(response.get('role'))[:60], 'conditions': conditions,
+            **{k: grades.text(response.get(k))[:120] for k in ('cert_no', 'contest', 'edition', 'award', 'issuer')},
+            'students': [grades.text(x)[:20] for x in response.get('students') or [] if grades.text(x)][:20] if isinstance(response.get('students'), list) else [],
             'indicator': links[0]['id'] if links else '', 'reason': grades.text(links[0].get('reason'))[:300] if links else '',
             'also': [x['id'] for x in links[1:]], 'summary': grades.text(response.get('summary'))[:200],
             'quotes': quote_checks(quotes, excerpt, bool(images)),
@@ -186,6 +190,17 @@ def linked_files(materials, key):
     return sorted(m['file'] for m in materials if m['person'] == person and m['indicator'] == indicator and not m.get('excluded'))
 
 
+def relate(state):
+    tid = state['task_id']
+    found = trace(tid, 'relate', '判断哪些材料是同一成果', lambda: {'items': dedupe.relate(state['materials'], state['scheme']['indicators']),
+                                                                   '_trace': '按证书编号、比赛、作品与获奖等级核对'}, 'model')['items']
+    return {'relations': found}
+
+
+def relations_of(state):
+    return dedupe.effective(state.get('relations') or [], state.get('relation_changes'))
+
+
 def public(materials):
     return [{k: v for k, v in m.items() if k != 'excerpt'} for m in materials]
 
@@ -230,8 +245,10 @@ def suggest(state):
 def results_of(state, judgements=None, materials=None):
     scheme = state['scheme']
     judgements = state.get('judgements', {}) if judgements is None else judgements
-    materials = appraisal.material_flags([dict(m) for m in materials or state['materials']], state['people'], scheme['indicators'], scheme)
-    return [appraisal.score_person(p, scheme['indicators'], materials, judgements, state.get('suggestions'), scheme.get('allow_multi')) for p in state['people']]
+    relations = relations_of(state) if 'relations' in state else None
+    materials = appraisal.material_flags([dict(m) for m in materials or state['materials']], state['people'], scheme['indicators'], scheme, relations)
+    return [appraisal.score_person(p, scheme['indicators'], materials, judgements, state.get('suggestions'), scheme.get('allow_multi'), relations)
+            for p in state['people']]
 
 
 def scheme_view(scheme):
@@ -250,7 +267,8 @@ def core(scheme):
 def confirm(state):
     """One page: how the scheme was understood, the materials that need a look, and the judged items to score."""
     tid, scheme, people = state['task_id'], state['scheme'], state['people']
-    materials = appraisal.material_flags([dict(m) for m in state['materials']], people, scheme['indicators'], scheme)
+    relations = relations_of(state)
+    materials = appraisal.material_flags([dict(m) for m in state['materials']], people, scheme['indicators'], scheme, relations)
     judgements, judged_with, lapsed = dict(state.get('judgements', {})), state.get('judged_with') or {}, []
     names = {i['id']: i['name'] for i in scheme['indicators']}
     for key in list(judgements):
@@ -263,10 +281,13 @@ def confirm(state):
               'suggestion': (state.get('suggestions') or {}).get(f'{p}::{i["id"]}'), 'decided': judgements.get(f'{p}::{i["id"]}'),
               'materials': [m['id'] for m in materials if m['person'] == p and m['indicator'] == i['id'] and not m.get('excluded')]}
              for p in people for i in scheme['indicators'] if i['method'] == 'judge']
+    by_id = {m['id']: m for m in materials}
     preview = results_of(state, provisional, materials)
     pending = {'stage': 'confirm', 'kind': 'appraisal', 'detected': state['request'].get('detected'), 'people': people,
                'source_text': scheme.get('source_text', ''), **scheme_view(scheme), 'materials': public(materials), 'judge': judge,
                'preview': preview, 'methods': appraisal.METHODS, 'version': state['request'].get('version') or 1,
+               'relations': [{**r, 'pair': [dedupe.view(by_id[r['a']]), dedupe.view(by_id[r['b']])]} for r in relations if r['a'] in by_id and r['b'] in by_id],
+               'questions': dedupe.questions(scheme, relations, materials), 'relation_words': dedupe.RELATIONS, 'same_work_words': dedupe.SAME_WORK,
                'changes': change_report(state, preview, lapsed) if state.get('baseline') else None}
     store.update(tid, step='请确认', result={'kind': 'appraisal', 'pending': pending, 'scheme': scheme,
                                              'summary': {'pending': sum(1 for m in materials if m['flags']) + sum(1 for j in judge if not j['decided']),
@@ -276,6 +297,10 @@ def confirm(state):
     if core(revised) != core(scheme):
         store.event(tid, 'confirm', '指标已修改，按新指标重新整理材料', mode='human')
         return {'scheme': revised, 'rescan': True, 'judgements': {}}
+    answers = {k: v for k, v in (response.get('scheme_answers') or {}).items() if v in dedupe.SAME_WORK}
+    if answers:
+        scheme = {**scheme, 'indicators': [{**i, 'same_work': answers.get(i['id'], i.get('same_work', ''))} for i in scheme['indicators']]}
+    relation_changes = {**(state.get('relation_changes') or {}), **{k: v for k, v in (response.get('relations') or {}).items() if v in dedupe.RELATIONS}}
     changes = response.get('materials') or {}
     remembered = dict(state.get('material_changes') or {})
     for m in materials:
@@ -283,12 +308,14 @@ def confirm(state):
         apply_change(m, change)
         if change:
             remembered[m['file']] = change
-    materials = appraisal.material_flags(materials, people, scheme['indicators'], scheme)
+    materials = appraisal.material_flags(materials, people, scheme['indicators'], scheme,
+                                         dedupe.effective(state.get('relations') or [], relation_changes))
     judgements = {**judgements, **(response.get('judgements') or {})}
     judged_with = {**{k: v for k, v in judged_with.items() if k in judgements},
                    **{k: linked_files(materials, k) for k in response.get('judgements') or {}}}
     store.event(tid, 'confirm', '评分人已确认', mode='human', detail={'materials_changed': sum(1 for c in changes.values() if c), 'judged': len(response.get('judgements') or {})})
-    return {'materials': materials, 'judgements': judgements, 'judged_with': judged_with, 'material_changes': remembered, 'rescan': False}
+    return {'materials': materials, 'judgements': judgements, 'judged_with': judged_with, 'material_changes': remembered, 'rescan': False,
+            'scheme': scheme, 'relation_changes': relation_changes}
 
 
 def change_report(state, preview, lapsed):
@@ -355,6 +382,7 @@ def export(state):
     tid = state['task_id']
     results = results_of(state)
     result = {'kind': 'appraisal', 'scheme': state['scheme'], 'materials': public(state['materials']), 'results': results, 'people': state['people'],
+              'relations': relations_of(state),
               'agreement': appraisal.agreement(results), 'detected': state['request'].get('detected'),
               'summary': {'people': len(results), 'materials': len(state['materials']), 'pending': 0,
                           'excluded': sum(1 for m in state['materials'] if m.get('excluded')),
@@ -370,11 +398,12 @@ def export(state):
 
 
 builder = StateGraph(AppraisalState)
-for name, fn in [('draft_scheme', draft_scheme), ('read_materials', read_materials), ('suggest', suggest), ('confirm', confirm), ('export', export)]:
+for name, fn in [('draft_scheme', draft_scheme), ('read_materials', read_materials), ('relate', relate), ('suggest', suggest), ('confirm', confirm), ('export', export)]:
     builder.add_node(name, fn)
 builder.add_edge(START, 'draft_scheme')
 builder.add_edge('draft_scheme', 'read_materials')
-builder.add_edge('read_materials', 'suggest')
+builder.add_edge('read_materials', 'relate')
+builder.add_edge('relate', 'suggest')
 builder.add_edge('suggest', 'confirm')
 builder.add_conditional_edges('confirm', after_confirm)
 builder.add_edge('export', END)
@@ -418,7 +447,7 @@ def carry(task, rules_text=None, revoke=()):
     values, result = graph.get_state(versions.config(task)).values, task['result']
     current = rules_now(task)
     changed = rules_text is not None and not versions.same_text(rules_text, current)
-    seed = {k: values[k] for k in ('judgements', 'judged_with', 'material_changes') if values.get(k)}
+    seed = {k: values[k] for k in ('judgements', 'judged_with', 'material_changes', 'relation_changes') if values.get(k)}
     if not changed and values.get('scheme'):
         seed['scheme'] = (result.get('pending') or {}).get('scheme') or values['scheme']
         seed['people'] = values.get('people') or []

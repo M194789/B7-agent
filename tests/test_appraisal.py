@@ -1,6 +1,6 @@
 import time
 
-from app import appraisal, model
+from app import appraisal, dedupe, model
 
 SCHEME = appraisal.normalize_scheme({'indicators': [
     {'id': 'I1', 'group': '党建', 'name': '学生党建工作', 'max': 10, 'method': 'judge',
@@ -84,6 +84,10 @@ def fake_model(instruction, payload, images=None):
         return {'indicators': [{**i, 'points': {'省级及以上': 3}} if i['id'] == 'I5' else i for i in payload['current']['indicators']]}
     if instruction == appraisal.JUDGE_INSTRUCTION:
         return {'level': '良好', 'reason': '测试', 'quotes': []}
+    if instruction == dedupe.RELATE_INSTRUCTION:  # the same title at another level: the same work awarded twice
+        found = {m['id']: m for m in payload['materials']}
+        return {'relations': [{'a': a, 'b': b, 'relation': 'same_work' if found[a]['project'] == found[b]['project'] else 'different', 'reason': '测试'}
+                              for a, b in payload['pairs']]}
     name = payload['file_name']
     person = payload['filename_hint']
     for words, indicator, doc_type in [(('日志',), 'I3', '辅导员工作日志'), (('谈话',), 'I3', '谈话记录'), (('值班',), 'I3', '值班记录'),
@@ -125,11 +129,11 @@ def test_appraisal_demo_end_to_end(monkeypatch):
         pending = task['result']['pending']
         assert pending['stage'] == 'confirm' and not pending.get('scheme_changed')
         changes = {m['id']: {'person': m['person'], 'indicator': m['indicator'], 'excluded': m['file'] == '李强_获奖证书_挑战杯省赛.png'} for m in pending['materials']}
-        missing = client.post(f'/api/tasks/{tid}/review', json={'materials': changes})
+        missing = client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'scheme_answers': {'I9': 'highest'}})
         assert missing.status_code == 400 and '需要你打分' in missing.json()['detail']
-        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': {'王敏::I1': {'score': 11}}}).status_code == 400
+        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': {'王敏::I1': {'score': 11}}, 'scheme_answers': {'I9': 'highest'}}).status_code == 400
         judgements = {f'{p}::I1': {'score': 8} for p in ('王敏', '李强', '赵琳')}
-        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': judgements}).status_code == 200
+        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': judgements, 'scheme_answers': {'I9': 'highest'}}).status_code == 200
         task = wait(client, tid)
         assert task['status'] == 'completed', task
         totals = {r['person']: r for r in task['result']['results']}
@@ -152,7 +156,7 @@ def test_appraisal_new_version_keeps_scores_unless_their_materials_changed(monke
         pending = wait(client, tid)['result']['pending']
         changes = {m['id']: {'excluded': True, 'note': '重复'} for m in pending['materials'] if m['file'] == '李强_获奖证书_挑战杯省赛.png'}
         judgements = {f'{p}::I1': {'score': 8} for p in ('王敏', '李强', '赵琳')}
-        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': judgements}).status_code == 200
+        assert client.post(f'/api/tasks/{tid}/review', json={'materials': changes, 'judgements': judgements, 'scheme_answers': {'I9': 'highest'}}).status_code == 200
         assert wait(client, tid)['status'] == 'completed'
         before = asked.count(appraisal.SCHEME_INSTRUCTION)
         added = ('files', ('王敏_党建活动记录_补充.txt', io.BytesIO('王敏 组织党日活动'.encode('utf-8')), 'text/plain'))

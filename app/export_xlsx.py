@@ -203,6 +203,14 @@ def appraisal_book(book, task):
           [[m['file'], states.get(m.get('status'), ''), '；'.join(m.get('reasons') or []), m.get('person', ''), by_id.get(m.get('indicator'), ''),
             m.get('doc_type', ''), m.get('level', ''), m.get('date', ''), m.get('role', ''), m.get('summary', '')] for m in view.get('materials') or []],
           [36, 12, 50, 10, 20, 12, 8, 12, 12, 50], warn=lambda r: r[1] in ('需要补充证明', '不符合条件'))
+    relations = view.get('relations') or []
+    if relations:
+        words = {'same_award': '同一奖项（只计一次）', 'same_work': '同一成果的不同奖项或刊载', 'different': '不同成果', 'unsure': '判断不了'}
+        by = {'rule': '程序规则', 'model': '模型判断', 'evaluator': '评分人修改', 'none': '模型没有判断'}
+        sheet(book, '重复判断', ['材料一', '材料二', '结论', '判断来源', '依据', '原文引用'],
+              [[names.get(r['a'], r['a']), names.get(r['b'], r['b']), words.get(r['relation'], r['relation']), by.get(r['by'], r['by']), r['reason'],
+                '\n'.join(q['text'] + ('' if q.get('verified') else '（原文中未找到）') for q in r.get('evidence') or [])] for r in relations],
+              [32, 32, 18, 12, 40, 50], warn=lambda r: r[2] == '判断不了')
     import_lines = [('指标', x) for x in view.get('scheme_lines') or []]
     if view.get('source_text') or view['scheme'].get('source_text'):
         import_lines.insert(0, ('方案原文', view.get('source_text') or view['scheme']['source_text']))
