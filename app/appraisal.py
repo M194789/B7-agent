@@ -206,12 +206,13 @@ def material_status(m, ids, people, scheme, claims):
             proof.append(f'材料没写清是否满足“{c["condition"]}”')
     others = claims.get((item['id'], event_key(m)), [])
     if len(others) > 1:
-        proof.append('同一项目被多人申报（' + '、'.join(others) + '），需要确认归属')
+        note = f'同一项目也出现在{"、".join(o for o in others if o != m.get("person"))}的材料中（团队合作时属正常，各自计分；方案有限制的按方案条件判断）'
+    info = [note] if len(others) > 1 else []
     if fail:
-        return 'ineligible', fail + proof
+        return 'ineligible', fail + proof + info
     if proof:
-        return 'needs_proof', proof
-    return 'counted', [f'符合“{item["name"]}”的计分条件' + (f'（{m["level"]}）' if m.get('level') else '')]
+        return 'needs_proof', proof + info
+    return 'counted', [f'符合“{item["name"]}”的计分条件' + (f'（{m["level"]}）' if m.get('level') else '')] + info
 
 
 def suspected_duplicates(materials):
@@ -341,7 +342,7 @@ def material_flags(materials, people, indicators, scheme=None, relations=None):
                 flags.append(f'材料类型“{m.get("doc_type") or "未识别"}”对不上必交材料（{"、".join(item["required"])}），不会被算作已提交，请改成对应的材料类型')
             others = claims.get((m['indicator'], event_key(m)), [])
             if len(others) > 1:
-                flags.append('同一项目被多人申报：' + '、'.join(others))
+                flags.append('同一项目也有他人申报：' + '、'.join(others))
         # The model's own doubts are shown as notes; only these system checks mark a material for attention.
         m['flags'] = flags
     return materials

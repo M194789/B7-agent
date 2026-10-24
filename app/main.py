@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import json
 import mimetypes
-import os
 import shutil
-import subprocess
-import sys
 import tempfile
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -709,60 +705,21 @@ def source_file(task_id: str, index: int, inline: bool = False):
     return FileResponse(item['path'], filename=item['name'], media_type='application/octet-stream')
 
 
-EVAL_RESULTS = store.ROOT / 'eval' / 'results'
-_evaluation = {'process': None}
-
-
-def read_json(path):
-    try:
-        return json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return None
-
-
-def eval_cases():
-    from eval import cases
-    return cases.GRADE_CASES + cases.APPRAISAL_CASES
-
-
-@app.get('/api/evaluation')
-def evaluation(file: str = ''):
-    """The latest (or a chosen) evaluation report and the progress of a run in progress."""
-    history = sorted((p.name for p in EVAL_RESULTS.glob('eval_*.json')), reverse=True)[:20]
-    name = file if file in history else 'latest.json'
-    process = _evaluation['process']
-    progress_file = EVAL_RESULTS / 'progress.json'
-    progress = read_json(progress_file) or {}
-    spawned = process is not None and process.poll() is None
-    # A run started from the command line only leaves its progress file; trust it while it keeps being updated.
-    external = bool(progress.get('running')) and progress_file.is_file() and time.time() - progress_file.stat().st_mtime < 900
-    return {'report': read_json(EVAL_RESULTS / name), 'history': history, 'running': spawned or external, 'progress': progress,
-            'cases': [{k: c[k] for k in ('id', 'title', 'level', 'about')} for c in eval_cases()]}
-
-
-class EvaluationOptions(BaseModel):
-    repeat: int = Field(default=1, ge=1, le=3)
-    cases: list[str] = Field(default_factory=list)
-
-
-@app.post('/api/evaluation/run', status_code=202)
-def run_evaluation(options: EvaluationOptions):
-    process = _evaluation['process']
-    if process is not None and process.poll() is None:
-        raise HTTPException(409, '评测正在运行，请等待完成。')
-    if not model.status()['configured']:
-        raise ValueError('评测需要真实模型，请先在“模型设置”中连接模型。')
-    known = {c['id'] for c in eval_cases()}
-    if any(c not in known for c in options.cases):
-        raise ValueError('选择了不存在的评测用例。')
-    command = [sys.executable, '-X', 'utf8', '-m', 'eval.run', '--repeat', str(options.repeat)]
-    if options.cases:
-        command += ['--cases', ','.join(options.cases)]
-    EVAL_RESULTS.mkdir(parents=True, exist_ok=True)
-    log = (EVAL_RESULTS / 'last_run.log').open('w', encoding='utf-8')
-    # The key travels only in the child's environment; the runner keeps its own temporary data folder.
-    _evaluation['process'] = subprocess.Popen(command, cwd=store.ROOT, env={**os.environ, **model.environment(), 'PYTHONIOENCODING': 'utf-8'},
-                                              stdout=log, stderr=subprocess.STDOUT)
+@app.delete('/api/tasks/{task_id}')
+def delete_task(task_id: str):
+    """Remove a task for good: its record, history, versions, saved progress and its folder of uploads and outputs."""
+    task = require_task(task_id)
+    if task['status'] in ('queued', 'running'):
+        raise HTTPException(409, '任务正在处理，请先中止再删除。')
+    threads = {versions.thread(task), task_id}
+    for n in range(1, versions.number(task)):
+        old = store.version_get(task_id, n)
+        if old:
+            threads.add(old['request'].get('thread') or task_id)
+    for thread in threads:
+        workflow.checkpointer.delete_thread(thread)
+    store.delete_task(task_id)
+    shutil.rmtree(store.DATA / 'tasks' / task_id, ignore_errors=True)
     return {'ok': True}
 
 

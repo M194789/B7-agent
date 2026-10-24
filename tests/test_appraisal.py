@@ -53,7 +53,7 @@ def test_flags_cross_claims_only_for_counted_items():
         material('M5', '', 'I3'), material('M6', '王敏', 'I5', project='程序设计', level='校级'),
     ]
     flags = {m['id']: m['flags'] for m in appraisal.material_flags(materials, ['王敏', '李强', '赵琳'], SCHEME)}
-    assert any('多人申报' in f for f in flags['M1']) and any('多人申报' in f for f in flags['M2'])
+    assert any('他人申报' in f for f in flags['M1']) and any('他人申报' in f for f in flags['M2'])
     assert flags['M3'] == [] and flags['M4'] == []
     assert any('属于哪位' in f for f in flags['M5'])
     assert any('计分范围' in f for f in flags['M6'])

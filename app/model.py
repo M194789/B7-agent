@@ -41,12 +41,6 @@ def configure(base_url, model, api_key=''):
         _config.update(base_url=base_url, model=model.strip(), api_key=api_key.strip())
 
 
-def environment():
-    """Current settings as B7_LLM_* variables, handed only to a child process (the evaluation runner), never written to disk."""
-    with _lock:
-        return {'B7_LLM_BASE_URL': _config['base_url'], 'B7_LLM_MODEL': _config['model'], 'B7_LLM_API_KEY': _config['api_key']}
-
-
 def clear():
     with _lock:
         _config.update(base_url='', model='', api_key='')

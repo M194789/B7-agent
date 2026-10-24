@@ -156,6 +156,13 @@ def template_drop(template_id):
         db.execute('DELETE FROM templates WHERE id=?', (template_id,))
 
 
+def delete_task(task_id):
+    with connect() as db:
+        for table in ('events', 'decisions', 'versions'):
+            db.execute(f'DELETE FROM {table} WHERE task_id=?', (task_id,))
+        db.execute('DELETE FROM tasks WHERE id=?', (task_id,))
+
+
 def version_put(task_id, number, payload):
     with connect() as db:
         db.execute('INSERT OR REPLACE INTO versions VALUES (?,?,?,?)', (task_id, number, dump(payload), now()))

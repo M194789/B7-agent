@@ -18,8 +18,8 @@ const paths = {
   gauge:'<path d="M4 18a8 8 0 1 1 16 0"/><path d="m12 18 4-6"/>',
 };
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.file}</svg>`;
-const state = {config:null,tasks:[],task:null,page:'new',tab:'result',filter:'all',search:'',files:[],modFiles:[],provider:'deepseek',busy:false,evaluation:null};
-const labels = {new:'新建任务',tasks:'全部任务',evaluation:'效果评测',settings:'模型设置',task:'任务'};
+const state = {config:null,tasks:[],task:null,page:'new',tab:'result',filter:'all',search:'',files:[],modFiles:[],modRemove:new Set(),modRules:null,provider:'deepseek',busy:false};
+const labels = {new:'新建任务',tasks:'全部任务',settings:'模型设置',task:'任务'};
 const kindNames = {grades:'课程成绩总评',appraisal:'工作考核评分'};
 const statuses = {queued:['等待执行','blue'],running:['处理中','blue'],waiting_review:['等你确认','amber'],completed:['已完成','green'],failed:['需要处理','red'],cancelled:['已切换',''],stopped:['已中止','']};
 const modeNames = {rule:'规则处理',model:'实际模型调用',human:'人工确认'};
@@ -41,7 +41,7 @@ function navigate(page) { location.hash=page; }
 
 function renderNav() {
   const pending = state.tasks.filter(t=>t.status==='waiting_review').length;
-  $('#nav').innerHTML = [['new','plus'],['tasks','list'],['evaluation','gauge'],['settings','settings']].map(([page,glyph])=>`<a class="nav-item ${state.page===page || state.page==='task'&&page==='tasks'?'active':''}" href="#${page}" aria-label="${labels[page]}" ${state.page===page?'aria-current="page"':''}>${icon(glyph)}<span>${labels[page]}</span>${page==='tasks'&&pending?`<span class="nav-count">${pending}</span>`:''}</a>`).join('');
+  $('#nav').innerHTML = [['new','plus'],['tasks','list'],['settings','settings']].map(([page,glyph])=>`<a class="nav-item ${state.page===page || state.page==='task'&&page==='tasks'?'active':''}" href="#${page}" aria-label="${labels[page]}" ${state.page===page?'aria-current="page"':''}>${icon(glyph)}<span>${labels[page]}</span>${page==='tasks'&&pending?`<span class="nav-count">${pending}</span>`:''}</a>`).join('');
   $('#breadcrumb-current').textContent = labels[state.page] || '工作台';
   $('#connection-label').textContent = state.config?.model.configured ? `已连接 ${state.config.model.model}` : '模型未连接';
 }
@@ -54,7 +54,7 @@ function empty(title='还没有任务', subtitle='从上方选择一个流程，
 }
 function taskTable(tasks) {
   if(!tasks.length) return empty();
-  return `<div class="table-wrap"><table class="task-table"><thead><tr><th>任务名称</th><th>类型</th><th>状态</th><th>执行方式</th><th>创建时间</th><th></th></tr></thead><tbody>${tasks.map(t=>`<tr data-task="${e(t.id)}" tabindex="0" role="link" aria-label="打开任务 ${e(t.name)}"><td><div class="task-title">${icon('table')}${e(t.name)}</div><div class="cell-sub">${e(t.step)}</div></td><td>${kindNames[t.kind]||t.kind}</td><td>${statusBadge(t.status)}</td><td><span class="muted">${t.llm_used?'模型辅助':'规则流程'}</span></td><td class="mono muted">${date(t.created_at)}</td><td class="muted">↗</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="task-table"><thead><tr><th>任务名称</th><th>类型</th><th>状态</th><th>执行方式</th><th>创建时间</th><th></th></tr></thead><tbody>${tasks.map(t=>`<tr data-task="${e(t.id)}" tabindex="0" role="link" aria-label="打开任务 ${e(t.name)}"><td><div class="task-title">${icon('table')}${e(t.name)}</div><div class="cell-sub">${e(t.step)}</div></td><td>${kindNames[t.kind]||t.kind}</td><td>${statusBadge(t.status)}</td><td><span class="muted">${t.llm_used?'模型辅助':'规则流程'}</span></td><td class="mono muted">${date(t.created_at)}</td><td>${['queued','running'].includes(t.status)?'':`<button class="button ghost small" type="button" data-delete-task="${e(t.id)}" aria-label="删除任务 ${e(t.name)}">删除</button>`}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 // ---------------------------------------------------------------- the single entrance
@@ -66,7 +66,7 @@ function newPage() {
   ${flowFields()}
   <div class="form-field"><label class="form-label">材料 <small>最多 ${limits.files} 个，单个不超过 ${limits.upload_mb}MB</small></label><label class="dropzone" id="dropzone" for="file-input">${icon('upload')}<b>把所有材料拖到这里，或点击选择</b><small>学习通 / 雨课堂 / 教务导出的表格、手写登分表照片、PDF 成绩单、证书、工作记录、名单……混在一起也可以；整个文件夹或 zip 压缩包也能直接拖进来</small><input id="file-input" type="file" multiple accept=".csv,.tsv,.xlsx,.xls,.docx,.pdf,.txt,.md,.jpg,.jpeg,.png,.webp,.zip" hidden></label><div class="button-row" style="margin-top:8px"><button class="button small" type="button" data-action="pick-folder">${icon('upload')}选择文件夹</button><input id="folder-input" type="file" webkitdirectory multiple hidden></div><div class="file-list" id="file-list"></div></div>
   <div class="form-field"><label class="form-label" for="rules-text">评分规则 <small>用自己的话写、粘贴，或从文件读取（TXT / Word / PDF）</small><button class="button ghost small" type="button" data-action="pick-rules" style="margin-left:8px">从文件读取</button><input id="rules-file" type="file" accept=".txt,.md,.docx,.pdf" hidden></label><textarea id="rules-text" name="rules_text" rows="6" placeholder="例如：小测占20%，三次去掉最低一次取平均；作业10%；期中20%，期末50%；缺考按0分，缓考待定，总评取整。&#10;&#10;也可以粘贴整份考核方案，如“学生竞赛获奖每个项目计2分，最高10分；须提交工作日志、谈话记录，缺一项扣5分……”"></textarea><div class="form-help">只想整合、去重而不算分，可以不填。规则文件也可以和材料一起拖进来，系统会认出它。规则会先给你确认，再由程序精确计算。</div></div>
-  <details class="form-field"><summary class="form-label" style="cursor:pointer">更多选项 <small>都可以不填</small></summary><div class="two-col" style="margin-top:10px"><div class="form-field"><label class="form-label" for="task-name">任务名称</label><input id="task-name" name="name" type="text" maxlength="100" placeholder="如：数据结构 2026秋 总评"></div><div class="form-field"><label class="form-label" for="course">课程名称</label><input id="course" name="course" type="text" maxlength="100" placeholder="表格里没有课程名时使用"></div></div><div class="form-field"><label class="form-label" for="people">被考核人名单 <small>工作考核用，不填则从材料中识别</small></label><textarea id="people" name="people" rows="2" placeholder="王敏、李强、赵琳"></textarea></div></details>
+  <div class="form-field"><div class="form-label">选填信息 <small>不填也能处理，填了更准确</small></div><div class="two-col" style="margin-top:6px"><div class="form-field"><label class="form-label" for="task-name">任务名称</label><input id="task-name" name="name" type="text" maxlength="100" placeholder="如：数据结构 2026秋 总评"></div><div class="form-field"><label class="form-label" for="course">课程名称</label><input id="course" name="course" type="text" maxlength="100" placeholder="表格里没有课程名时使用"></div></div><div class="form-field"><label class="form-label" for="people">被考核人名单 <small>工作考核用，不填则从材料中识别</small></label><textarea id="people" name="people" rows="2" placeholder="王敏、李强、赵琳"></textarea></div></div>
   <div class="form-actions"><small class="muted">原始材料只保存在本机；模型会收到识别所需的内容，演示请用合成或脱敏材料。</small><button class="button primary" type="submit" id="create-submit">开始处理 ${icon('arrow')}</button></div></form></div></section>
   <aside class="form-aside">${prefsCard()}<section class="card side-card"><h3>接下来会发生什么</h3><ol class="numbered-list"><li>自动识别每份材料：表格、照片、PDF、证书都会读出来</li><li>整合到人：去掉重复，找出冲突、缺考、名单外的人</li><li>按你的规则算分，把结果和需要你决定的问题放在一页请你确认</li></ol></section>
   <section class="card side-card"><h3>先用样例试试</h3><p>都是合成数据，每份都埋了常见问题。</p><div style="display:grid;gap:8px;margin-top:12px"><button class="button small" data-demo="course">${icon('spark')}课程总评：学习通 + 教务 + 手写照片</button><button class="button small" data-demo="appraisal">${icon('spark')}辅导员考核：30 份证明材料</button><button class="button small" data-demo="grades">${icon('spark')}只整合三平台成绩，不算分</button></div></section></aside></div>
@@ -96,7 +96,7 @@ function taskPage() {
   if(!t) return '<div class="loading">正在载入任务…</div>';
   const det=t.result?.pending?.detected||t.result?.detected||t.request?.detected;
   const switchable=['waiting_review','failed'].includes(t.status);
-  const head=`<a class="back-link" href="#tasks">← 全部任务</a><div class="page-heading"><div><div class="eyebrow">${t.kind==='appraisal'?'WORK APPRAISAL':'COURSE GRADES'} <span class="task-key">/ ${e(t.id.slice(0,8).toUpperCase())}</span></div><h1 style="font-size:24px">${e(t.name)}${t.version>1?` <small class="muted" style="font-size:14px">第 ${t.version} 版</small>`:''}</h1><p>${date(t.created_at)} 创建${det?` · 已识别为<b>${e(det.label)}</b>${det.reason?`（${e(det.reason)}）`:''}`:''}${switchable?` <button class="button ghost small" data-action="switch">不对，改为${t.kind==='grades'?'工作考核评分':'课程成绩总评'}</button>`:''}</p></div>${statusBadge(t.status)}</div>`;
+  const head=`<a class="back-link" href="#tasks">← 全部任务</a><div class="page-heading"><div><div class="eyebrow">${t.kind==='appraisal'?'WORK APPRAISAL':'COURSE GRADES'} <span class="task-key">/ ${e(t.id.slice(0,8).toUpperCase())}</span></div><h1 style="font-size:24px">${e(t.name)}${t.version>1?` <small class="muted" style="font-size:14px">第 ${t.version} 版</small>`:''}</h1><p>${date(t.created_at)} 创建${det?` · 已识别为<b>${e(det.label)}</b>${det.reason?`（${e(det.reason)}）`:''}`:''}${switchable?` <button class="button ghost small" data-action="switch">不对，改为${t.kind==='grades'?'工作考核评分':'课程成绩总评'}</button>`:''}</p></div><div style="display:flex;gap:8px;align-items:center">${statusBadge(t.status)}${['queued','running'].includes(t.status)?'':`<button class="button ghost small" type="button" data-delete-task="${e(t.id)}">删除任务</button>`}</div></div>`;
   const top=head+stateBanner(t);
   if(['queued','running'].includes(t.status)) return top+progressView(t);
   if(t.status==='failed') return top+`<div class="notice red">${e(t.error)}<div style="margin-top:10px"><button class="button small" data-action="retry">重试</button></div></div>${changePanel(t)}${progressView(t)}`;
@@ -145,14 +145,46 @@ function changesNotice(c) {
 
 // Add, replace or remove materials, change the rules, take back the last change. Available whenever nothing is running.
 function changePanel(t) {
-  const rules=t.rules_now??'';
-  return `<details class="card" id="change-panel"><summary class="card-head" style="cursor:pointer"><h2>修改材料或规则</h2><small class="muted">补交、删错、改规则都可以；没变的材料不会重新识别，之前的处理会尽量沿用</small></summary><div class="card-body">
-  <div class="form-help" style="margin-bottom:8px">现有材料（勾选要删除的）：</div><div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">${t.files.map(f=>`<label class="check"><input type="checkbox" data-remove-index="${f.index}"> ${e(f.name)}${f.role?' <small class="muted">名单</small>':''}</label>`).join('')}</div>
-  <div class="form-actions" style="justify-content:flex-start;gap:8px;margin-bottom:6px"><label class="button small">${icon('file')}添加文件<input type="file" id="mod-file-input" multiple hidden></label><label class="button small">添加文件夹<input type="file" id="mod-folder-input" webkitdirectory multiple hidden></label><small class="muted">同名文件会替换原来的那份</small></div><div id="mod-file-list" style="margin-bottom:12px"></div>
-  <label class="rule-field"><span>${t.kind==='appraisal'?'考核方案':'评分规则'}（改了才会重新理解）</span><textarea id="mod-rules" rows="${Math.min(10,Math.max(3,rules.split('\n').length+1))}" maxlength="6000">${e(rules)}</textarea></label>
-  <div class="form-actions" style="margin-top:12px;justify-content:flex-start;gap:8px"><button class="button primary small" type="button" data-action="modify">按修改重新处理 ${icon('arrow')}</button>${t.status==='completed'?'<button class="button small" type="button" data-action="reopen">回到确认页修改处理</button>':''}${t.version>1?`<button class="button ghost small" type="button" data-action="undo">撤回到第 ${t.version-1} 版</button>`:''}</div>
-  ${t.status==='completed'?'<div class="form-help" style="margin-top:8px">修改后，当前已确认的结果会标为失效，新结果需要你再确认一次。</div>':''}</div></details>`;
+  return `<details class="card" id="change-panel" ${state.modOpen?'open':''}><summary class="card-head" style="cursor:pointer"><h2>修改材料或规则</h2><small class="muted">补交、删错、改规则都可以；没变的材料不会重新识别，之前的处理会尽量沿用</small></summary><div class="card-body" id="change-body">${changeBody(t)}</div></details>`;
 }
+function changeBody(t) {
+  const rules=t.rules_now??'',value=state.modRules??rules,removed=state.modRemove;
+  const fileRow=f=>removed.has(f.index)
+    ?`<div style="color:var(--red)"><s>${e(f.name)}</s> <b>将删除</b> <button class="button ghost small" type="button" data-undo-remove="${f.index}">撤销</button></div>`
+    :`<label class="check"><input type="checkbox" data-remove-index="${f.index}"> ${e(f.name)}${f.role?' <small class="muted">名单</small>':''}</label>`;
+  return `<div class="form-help" style="margin-bottom:8px">现有材料（勾选后可以删除）：</div><div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">${t.files.map(fileRow).join('')}</div>
+  <button class="button small" type="button" data-action="mod-delete" id="mod-delete" hidden style="color:var(--red);border-color:var(--red);margin-bottom:12px">删除所选</button>
+  <div class="form-actions" style="justify-content:flex-start;gap:8px;margin-bottom:6px"><label class="button small">${icon('file')}添加文件<input type="file" id="mod-file-input" multiple hidden></label><label class="button small">添加文件夹<input type="file" id="mod-folder-input" webkitdirectory multiple hidden></label><small class="muted">同名文件会替换原来的那份</small></div>
+  <div id="mod-file-list" style="margin-bottom:12px">${state.modFiles.map((f,i)=>`<span class="file-chip" style="color:var(--red);border-color:var(--red)">新增：${e(f.name)} <button type="button" class="chip-remove" data-remove-mod="${i}" aria-label="移除 ${e(f.name)}">×</button></span>`).join('')}</div>
+  <label class="rule-field"><span>${t.kind==='appraisal'?'考核方案':'评分规则'} <b id="rules-changed" style="color:var(--red)" ${value!==rules?'':'hidden'}>（已修改）</b></span><textarea id="mod-rules" rows="${Math.min(10,Math.max(3,value.split('\n').length+1))}" maxlength="6000" style="${value!==rules?'border-color:var(--red);box-shadow:0 0 0 1px var(--red)':''}">${e(value)}</textarea></label>
+  <button class="button ghost small" type="button" data-action="restore-rules" id="restore-rules" ${value!==rules?'':'hidden'}>恢复原来的规则</button>
+  <div id="mod-summary" style="margin-top:12px">${modSummary(t)}</div>
+  <div class="form-actions" style="margin-top:8px;justify-content:flex-start;gap:8px"><button class="button primary small" type="button" data-action="modify">按修改重新处理 ${icon('arrow')}</button>${t.status==='completed'?'<button class="button small" type="button" data-action="reopen">回到确认页修改处理</button>':''}${t.version>1?`<button class="button ghost small" type="button" data-action="undo">撤回到第 ${t.version-1} 版</button>`:''}</div>
+  ${t.status==='completed'?'<div class="form-help" style="margin-top:8px">修改后，当前已确认的结果会标为失效，新结果需要你再确认一次。</div>':''}`;
+}
+function modSummary(t) {
+  const parts=[];
+  if(state.modRemove.size)parts.push(`删除 ${state.modRemove.size} 份材料`);
+  if(state.modFiles.length)parts.push(`新增 ${state.modFiles.length} 份材料`);
+  if(state.modRules!=null&&state.modRules!==(t.rules_now??''))parts.push('修改了规则');
+  return parts.length?`<div style="color:var(--red)"><b>将要提交的改动：</b>${parts.join('；')}</div>`:'<small class="muted">还没有改动。</small>';
+}
+function refreshChange() {
+  const body=$('#change-body');if(!body)return;
+  body.innerHTML=changeBody(state.task);bindChange();
+}
+function bindChange() {
+  const add=(input,named)=>input&&input.addEventListener('change',event=>{state.modFiles.push(...[...event.target.files].filter(f=>!HIDDEN_FILE.test(named(f))).map(f=>({file:f,name:named(f)})));event.target.value='';refreshChange();});
+  add($('#mod-file-input'),f=>f.name);add($('#mod-folder-input'),f=>f.webkitRelativePath||f.name);
+  const panel=$('#change-panel');if(panel)panel.addEventListener('toggle',()=>{state.modOpen=panel.open;});
+  const rules=$('#mod-rules');
+  if(rules)rules.addEventListener('input',()=>{
+    state.modRules=rules.value;const changed=rules.value!==(state.task.rules_now??'');
+    rules.style.borderColor=changed?'var(--red)':'';rules.style.boxShadow=changed?'0 0 0 1px var(--red)':'';
+    $('#rules-changed').hidden=!changed;$('#restore-rules').hidden=!changed;$('#mod-summary').innerHTML=modSummary(state.task);
+  });
+}
+function resetChange(){ state.modFiles=[];state.modRemove=new Set();state.modRules=null;state.modOpen=false; }
 
 function progressView(t) {
   const events=(t.events||[]).filter(x=>x.mode!=='human').slice(-8);
@@ -302,7 +334,7 @@ function appraisalConfirm(t,p) {
   const byState=k=>p.materials.filter(m=>(m.status||'counted')===k),proof=byState('needs_proof');
   const toScore=p.judge.filter(j=>!j.decided),byPerson=p.people.map(person=>[person,toScore.filter(j=>j.person===person)]).filter(([,list])=>list.length);
   const table=list=>`<div class="table-wrap"><table><thead><tr><th>材料</th><th>读到的内容</th><th>归属 / 指标</th></tr></thead><tbody>${list.map(m=>materialRow(t,m,p)).join('')}</tbody></table></div>`;
-  const judgeRow=j=>{const s=j.suggestion,value=j.decided?.score??'';return `<tr data-judge="${e(j.key)}"><td style="white-space:normal;min-width:150px"><b>${e(j.name)}</b><br><small class="muted">0 – ${j.max} 分${j.materials.length?` · ${j.materials.length} 份材料`:' · 没有对应材料'}</small><br><small class="muted">要评价工作质量或效果，系统不能代你打分</small></td><td style="min-width:120px"><input type="number" data-k="score" min="0" max="${j.max}" step="0.5" value="${e(value)}" placeholder="0 – ${j.max}">${s&&s.score!=null?`<button class="button ghost small" type="button" data-use-suggestion="${s.score}" style="margin-top:4px">采用建议 ${s.score} 分</button>`:''}</td><td style="white-space:normal;min-width:320px">${s&&s.score!=null?`<div>模型建议<b>${e(s.level)}</b>（${s.score} 分），仅供参考</div><details><summary><small class="muted">依据</small></summary><small>${e(s.reason)}</small>${s.missing?`<div><small style="color:var(--amber)">材料不足：${e(s.missing)}</small></div>`:''}${quoteList(s.quotes)}</details>`:`<small class="muted">${j.has_criteria?e(s?.reason||'没有对应材料，请直接评价。'):'方案没有给出评价标准，请你直接打分；系统只整理了材料。'}</small>`}<div class="quote-line"><small>${j.materials.map(id=>p.materials.find(m=>m.id===id)).filter(Boolean).map(m=>sourceLink(t,m)).join('、')}</small></div><input type="text" data-k="note" placeholder="说明（可选）" maxlength="300" style="margin-top:6px"></td></tr>`;};
+  const judgeRow=j=>{const s=j.suggestion,value=j.decided?.score??'';return `<tr data-judge="${e(j.key)}"><td style="white-space:normal;min-width:150px"><b>${e(j.name)}</b><br><small class="muted">0 – ${j.max} 分${j.materials.length?` · ${j.materials.length} 份材料`:' · 没有对应材料'}</small><br><small class="muted">要评价工作质量或效果，系统不能代你打分</small></td><td style="min-width:150px;vertical-align:top"><div style="display:flex;flex-direction:column;align-items:stretch;gap:6px"><input type="number" data-k="score" min="0" max="${j.max}" step="0.5" value="${e(value)}" placeholder="0 – ${j.max}">${s&&s.score!=null?`<button class="button ghost small" type="button" data-use-suggestion="${s.score}" style="white-space:nowrap">采用建议 ${s.score} 分</button>`:''}</div></td><td style="white-space:normal;min-width:320px;vertical-align:top">${s&&s.score!=null?`<div>模型建议<b>${e(s.level)}</b>（${s.score} 分），仅供参考</div><details><summary><small class="muted">依据</small></summary><small>${e(s.reason)}</small>${s.missing?`<div><small style="color:var(--amber)">材料不足：${e(s.missing)}</small></div>`:''}${quoteList(s.quotes)}</details>`:`<small class="muted">${j.has_criteria?e(s?.reason||'没有对应材料，请直接评价。'):'方案没有给出评价标准，请你直接打分；系统只整理了材料。'}</small>`}<div style="margin-top:6px;line-height:1.8"><small>材料：${j.materials.map(id=>p.materials.find(m=>m.id===id)).filter(Boolean).map(m=>sourceLink(t,m)).join('、')||'无'}</small></div><input type="text" data-k="note" placeholder="说明（可选）" maxlength="300" style="margin-top:6px;width:100%"></td></tr>`;};
   const preview=p.preview||[];
   return `<form id="confirm-form" data-kind="appraisal">
   <div class="notice">${p.people.length} 人、${p.materials.length} 份材料已整理完毕：${Object.entries(MATERIAL_STATES).map(([k,[l,c]])=>`${badge(l+' '+byState(k).length,c)}`).join(' ')}<br>${proof.length?`<b>${proof.length}</b> 份材料需要补充证明或核实，请逐份决定“已核实，计分”或“不计入”；`:''}${toScore.length?`<b>${toScore.length}</b> 项评价类指标需要你打分（模型建议只供参考，不会自动填入）；`:''}可以计分的材料由程序按方案算分。</div>
@@ -384,83 +416,9 @@ function settingsPage() {
 }
 
 // [key, label, what it measures, true when a lower number is better]
-const EVAL_METRICS = {
-  '成绩整合与总评': [
-    ['ocr_cells','照片 / 扫描件识别','与原件逐格比对的单元格准确率'],
-    ['mapping_tables','字段对应','模型建议无需修改即可使用的表格'],
-    ['rules_exact','规则理解','组成项、权重、计算方式、状态处理全部与老师本意一致'],
-    ['totals_if_rule_confirmed','直接确认规则时的总评','老师不改模型草稿就确认，总评与标准答案一致'],
-    ['rules_unsupported_pointed_out','指出规则表做不到的要求','如“酌情加分”，应交给老师而不是编造计算'],
-    ['rules_unclear_per_draft','每份草稿的待确认点','条数，越少越聚焦',true],
-    ['planted_caught','预设问题发现','同名、录错学号、超满分、名单外学生、分数冲突'],
-    ['unexpected_issues_per_run','意外疑点','每次运行中预设之外的提示数',true],
-    ['final_records','复核后的记录','整合后每条考核记录与标准答案一致'],
-    ['final_totals','复核后的总评','每名学生的总评与标准答案一致'],
-  ],
-  '工作考核评分': [
-    ['scheme_indicators','方案拆解','指标的计分方式、分值、上限、必交材料、评价等级全部正确'],
-    ['material_person','材料归属','判断材料属于哪位被考核人'],
-    ['material_indicator','指标对应','判断材料支撑哪个指标'],
-    ['material_level','级别判断','按方案是否计分、计几分'],
-    ['dedupe_pairs','同一项目合并','两份材料是否同一项目的判断'],
-    ['flags_caught','预设问题标出','多人申报、校级奖、未署名等'],
-    ['flags_extra_per_run','多余提示','每次运行中预设之外被标出的材料数',true],
-    ['quotes_found_in_text','摘录原文可查到','模型摘录的原句能在材料文字中逐字找到（图片内容除外）'],
-    ['suggestions_agree_clear','建议等级','与参考等级一致（不含有争议的项）'],
-    ['computed_items_unreviewed','未经复核的计算项','不做人工确认时程序计算项的正确率，说明复核为何必要'],
-    ['appraisal_final_items','复核后的各项得分','每人每项得分与标准答案一致'],
-  ],
-};
-const pct = v => v==null?'—':(v*100).toFixed(v>=0.995&&v<1?1:0)+'%';
-function metricValue(m,lower){ if(!m||m.den===0)return '—'; return lower?(+m.value.toFixed(2)).toString():pct(m.value); }
-function metricRange(key,report,lower){
-  const values=(report.per_repeat||[]).map(r=>r[key]).filter(m=>m&&m.den);
-  if(values.length<2)return '';
-  const nums=values.map(m=>m.value),lo=Math.min(...nums),hi=Math.max(...nums);
-  return lo===hi?'各轮一致':`各轮 ${lower?+lo.toFixed(2):pct(lo)} – ${lower?+hi.toFixed(2):pct(hi)}`;
-}
-function evalExamples(run){
-  const s=run.stages||{},out=[];
-  Object.entries(s.ocr||{}).forEach(([f,v])=>v.examples.forEach(x=>out.push(`识别 ${f}：${x}`)));
-  (s.mapping?.examples||[]).forEach(x=>out.push('字段：'+x));
-  (s.rules?.notes||[]).forEach(x=>out.push('规则：'+x));
-  if(s.rules?.unclear_expected&&!s.rules.unclear_found)out.push('规则：没有指出规则表做不到的要求');
-  (run.issues?.unexpected_examples||[]).forEach(x=>out.push('意外疑点：'+x));
-  (run.records?.examples||[]).forEach(x=>out.push('记录：'+x));
-  (run.totals?.examples||[]).forEach(x=>out.push('总评：'+x));
-  (s.scheme?.examples||[]).forEach(x=>out.push('方案：'+x));
-  (s.materials?.examples||[]).forEach(x=>out.push('材料：'+x));
-  (s.materials?.flags_missed_examples||[]).forEach(x=>out.push('未标出：'+x));
-  (s.materials?.flags_extra_examples||[]).forEach(x=>out.push('多余提示：'+x));
-  (s.suggestions?.details||[]).filter(d=>d.got!==d.want).forEach(d=>out.push(`建议等级 ${d.key}：参考 ${d.want}${d.debatable?'（有争议）':''}，模型 ${d.got||'未给出'}`));
-  (run.final_items?.examples||[]).forEach(x=>out.push('得分：'+x));
-  if(run.error)out.push('运行错误：'+run.error);
-  return out;
-}
-function evaluationPage(){
-  const ev=state.evaluation||{},report=ev.report,configured=state.config.model.configured;
-  const progress=ev.running?`<div class="notice blue">评测运行中：${e(ev.progress?.current||'准备中')}（已完成 ${ev.progress?.done||0} / ${ev.progress?.total||'?'}）。页面会自动刷新。</div>`:'';
-  const controls=`<section class="card"><div class="card-head"><h2>运行评测</h2>${badge(configured?'将使用 '+state.config.model.model:'需要连接模型',configured?'green':'')}</div><div class="card-body"><p class="settings-description">用当前连接的模型，把下列合成用例完整跑一遍：系统按真实流程处理，复核环节由脚本按标准答案作答（相当于一位认真核对原件的老师），从而分别衡量每个模型环节的准确率。多轮运行可以看出结果是否稳定。</p><div class="form-actions"><label class="form-label" style="margin:0">轮数 <select id="eval-repeat" style="width:auto;display:inline-block;margin-left:6px"><option>1</option><option>2</option><option selected>3</option></select></label><button class="button primary" data-action="run-eval" ${configured&&!ev.running?'':'disabled'}>开始评测 ${icon('arrow')}</button></div></div></section>`;
-  const cases=`<section class="card"><div class="card-head"><h2>评测用例</h2><small class="muted">全部为合成数据，标准答案由生成脚本给出</small></div><div class="table-wrap"><table><thead><tr><th>用例</th><th>考察点</th><th>说明</th></tr></thead><tbody>${(ev.cases||[]).map(c=>`<tr><td style="white-space:nowrap"><b>${e(c.id)}</b> ${e(c.title)}</td><td>${badge(c.level)}</td><td style="white-space:normal">${e(c.about)}</td></tr>`).join('')}</tbody></table></div></section>`;
-  if(!report) return `<div class="page-heading"><div><div class="eyebrow">EVALUATION</div><h1>效果评测</h1><p>每一步模型处理有多准，用带标准答案的测试集来回答。</p></div></div>${progress}${controls}${cases}`;
-  const m=report.metrics,runs=report.runs||[],failed=m.failed_runs?.num||0;
-  const groups=Object.entries(EVAL_METRICS).filter(([,list])=>list.some(([k])=>m[k])).map(([title,list])=>`<section class="card"><div class="card-head"><h2>${title}</h2></div><div class="table-wrap"><table><thead><tr><th>环节</th><th>结果</th><th>依据</th><th>稳定性</th><th>衡量什么</th></tr></thead><tbody>${list.filter(([k])=>m[k]).map(([k,label,about,lower])=>`<tr><td style="white-space:nowrap"><b>${label}</b></td><td class="mono" style="font-size:16px;white-space:nowrap">${metricValue(m[k],lower)}</td><td class="mono muted" style="white-space:nowrap">${lower?`共 ${m[k].num} 处 · ${m[k].den} 次运行`:`${m[k].num} / ${m[k].den}`}</td><td class="muted" style="white-space:nowrap">${metricRange(k,report,lower)}</td><td class="muted" style="white-space:normal">${e(about)}</td></tr>`).join('')}</tbody></table></div></section>`).join('');
-  const byCase=(report.cases||[]).map(c=>{
-    const mine=runs.filter(r=>r.case===c.id),examples=mine.flatMap(r=>evalExamples(r).map(x=>`第${r.repeat}轮 · ${x}`));
-    const secs=mine.length?Math.round(mine.reduce((s,r)=>s+(r.seconds||0),0)/mine.length):0;
-    const ok=mine.filter(r=>r.status==='completed').length;
-    return `<details class="review-card"><summary><b>${e(c.id)}</b> ${e(c.title)}　${badge(`${ok}/${mine.length} 轮完成`,ok===mine.length?'green':'red')} ${badge(examples.length?`${examples.length} 处差异`:'与标准答案一致',examples.length?'amber':'green')} <small class="muted">平均 ${secs} 秒</small></summary>${examples.length?`<ul class="rule-list" style="margin-top:10px">${examples.slice(0,30).map(x=>`<li>${e(x)}</li>`).join('')}</ul>`:'<p class="muted" style="margin-top:8px">各环节结果都与标准答案一致。</p>'}</details>`;
-  }).join('');
-  const history=(ev.history||[]).length>1?`<div class="filters" style="margin-top:10px">${ev.history.slice(0,6).map(f=>`<button class="filter" data-eval-file="${e(f)}">${e(f.replace('eval_','').replace('.json','').replace('_',' '))}</button>`).join('')}</div>`:'';
-  return `<div class="page-heading"><div><div class="eyebrow">EVALUATION</div><h1>效果评测</h1><p>每一步模型处理有多准，用带标准答案的测试集来回答。</p></div>${badge('合成数据评测','amber')}</div>${progress}
-  <div class="stats">${stat('评测用例',report.cases.length,`${report.repeat} 轮 · 共 ${runs.length} 次运行`,'list')}${stat('复核后总评正确率',pct(m.final_totals?.value),'成绩整合各用例','check','teal')}${stat('复核后考核得分正确率',pct(m.appraisal_final_items?.value),'工作考核各用例','check','teal')}${stat('运行失败',failed,failed?'见下方用例详情':'全部运行完成','alert',failed?'amber':'')}</div>
-  <div class="notice">模型：${e(report.model)} · ${e(date(report.started_at))} 开始，${e(date(report.finished_at))} 结束。以下数字只说明这套合成测试集上的表现，不代表真实材料的准确率；真实效果需要用脱敏的真实材料再测。${history}</div>
-  ${groups}<section class="card"><div class="card-head"><h2>逐个用例</h2><small class="muted">展开查看与标准答案不一致的地方</small></div><div class="card-body" style="display:grid;gap:10px">${byCase}</div></section>${controls}${cases}`;
-}
-
 function render() {
   renderNav();
-  $('#content').innerHTML=state.page==='new'?newPage():state.page==='tasks'?tasksPage():state.page==='evaluation'?evaluationPage():state.page==='settings'?settingsPage():taskPage();
+  $('#content').innerHTML=state.page==='new'?newPage():state.page==='tasks'?tasksPage():state.page==='settings'?settingsPage():taskPage();
   bindForms();
 }
 
@@ -468,12 +426,11 @@ async function refreshTasks() { state.tasks=await api('/api/tasks'); }
 async function loadTask(id) { state.task=await api('/api/tasks/'+encodeURIComponent(id)); }
 async function route() {
   const value=location.hash.slice(1)||'new';
-  state.files=[];
+  state.files=[];resetChange();
   if(value.startsWith('task/')) {
     state.page='task';state.task=null;state.tab='result';render();
     try { await loadTask(value.slice(5)); } catch(error) { toast(error.message);navigate('tasks');return; }
   } else state.page=Object.keys(labels).includes(value)&&value!=='task'?value:'new';
-  if(state.page==='evaluation') { try { state.evaluation=await api('/api/evaluation'); } catch(error) { toast(error.message); } }
   render();
   window.scrollTo(0,0);
 }
@@ -518,9 +475,7 @@ function bindForms() {
   });
   const confirmForm=$('#confirm-form');
   if(confirmForm) confirmForm.addEventListener('submit',submitConfirm);
-  const add=(input,named)=>input&&input.addEventListener('change',event=>{state.modFiles.push(...[...event.target.files].filter(f=>!HIDDEN_FILE.test(named(f))).map(f=>({file:f,name:named(f)})));event.target.value='';renderModFiles();});
-  add($('#mod-file-input'),f=>f.name);add($('#mod-folder-input'),f=>f.webkitRelativePath||f.name);
-  renderModFiles();
+  bindChange();
   const modelForm=$('#model-form');
   if(modelForm) modelForm.addEventListener('submit',event=>{event.preventDefault();saveModel(false);});
   const search=$('#task-search');
@@ -695,19 +650,14 @@ async function openLocate(source) {
   $('#modal').hidden=false;document.body.style.overflow='hidden';$('.modal-close').focus();
 }
 
-function renderModFiles() {
-  const el=$('#mod-file-list');if(!el)return;
-  el.innerHTML=state.modFiles.map((f,i)=>`<span class="file-chip">${e(f.name)} <button type="button" class="chip-remove" data-remove-mod="${i}" aria-label="移除 ${e(f.name)}">×</button></span>`).join('');
-}
 async function sendModify(extra={}) {
   const data=new FormData(),t=state.task;
   state.modFiles.forEach(f=>data.append('files',f.file,f.name));
-  data.append('remove',JSON.stringify($$('[data-remove-index]').filter(b=>b.checked).map(b=>Number(b.dataset.removeIndex))));
-  const rules=$('#mod-rules');
-  if(rules&&rules.value!==(t.rules_now??''))data.append('rules_text',rules.value);
+  data.append('remove',JSON.stringify([...state.modRemove]));
+  if(state.modRules!=null&&state.modRules!==(t.rules_now??''))data.append('rules_text',state.modRules);
   for(const [k,v] of Object.entries(extra))data.append(k,typeof v==='string'?v:JSON.stringify(v));
   await api(`/api/tasks/${t.id}/modify`,{method:'POST',body:data});
-  state.modFiles=[];await loadTask(t.id);await refreshTasks();render();toast('已按修改重新处理；没变的材料不会重新识别。');
+  resetChange();await loadTask(t.id);await refreshTasks();render();toast('已按修改重新处理；没变的材料不会重新识别。');
 }
 
 document.addEventListener('click',async event=>{
@@ -718,7 +668,7 @@ document.addEventListener('click',async event=>{
     else if(target.dataset.action==='pick-folder'){event.preventDefault();$('#folder-input').click();}
     else if(target.dataset.action==='pick-rules'){event.preventDefault();$('#rules-file').click();}
     else if(target.dataset.demo){event.preventDefault();await createDemo(target.dataset.demo);}
-    else if(target.dataset.task)navigate('task/'+target.dataset.task);
+    else if(target.dataset.task&&!event.target.closest('[data-delete-task]'))navigate('task/'+target.dataset.task);
     else if(target.dataset.filter){state.filter=target.dataset.filter;render();}
     else if(target.dataset.tab){state.tab=target.dataset.tab;render();}
     else if(target.dataset.evidenceRow!=null)openEvidence(Number(target.dataset.evidenceRow));
@@ -739,22 +689,21 @@ document.addEventListener('click',async event=>{
     else if(target.dataset.action==='reopen'){target.disabled=true;try{await sendModify({reopen:'1'});}finally{target.disabled=false;}}
     else if(target.dataset.revoke){if(!confirm('撤回这项处理？会生成新的一版，这个问题会重新列出来让你决定。'))return;target.disabled=true;try{await sendModify({revoke:[target.dataset.revoke]});}finally{target.disabled=false;}}
     else if(target.dataset.action==='undo'){if(!confirm(`撤回第 ${state.task.version} 版的修改，回到第 ${state.task.version-1} 版？`))return;await post('/api/tasks/'+state.task.id+'/undo');await loadTask(state.task.id);await refreshTasks();render();toast('已回到上一版。');}
-    else if(target.dataset.removeMod!=null){state.modFiles.splice(Number(target.dataset.removeMod),1);renderModFiles();}
+    else if(target.dataset.removeMod!=null){state.modFiles.splice(Number(target.dataset.removeMod),1);refreshChange();}
+    else if(target.dataset.action==='mod-delete'){$$('[data-remove-index]').filter(b=>b.checked).forEach(b=>state.modRemove.add(Number(b.dataset.removeIndex)));refreshChange();}
+    else if(target.dataset.undoRemove!=null){state.modRemove.delete(Number(target.dataset.undoRemove));refreshChange();}
+    else if(target.dataset.action==='restore-rules'){state.modRules=null;refreshChange();}
+    else if(target.dataset.deleteTask){event.stopPropagation();const t=state.tasks.find(x=>x.id===target.dataset.deleteTask)||state.task;if(!confirm(`删除任务“${t?.name||''}”？上传的材料、处理记录和结果都会删除，不能恢复。`))return;await api('/api/tasks/'+encodeURIComponent(target.dataset.deleteTask),{method:'DELETE'});await refreshTasks();if(state.page==='task'){navigate('tasks');}else render();toast('任务已删除。');}
     else if(target.dataset.locate){await openLocate(JSON.parse(target.dataset.locate));}
     else if(target.dataset.action==='save-prefs'){state.config.prefs=await post('/api/prefs',{identity:$('#pref-identity').value,flow:$('#pref-flow').value});render();toast('已保存。新建任务时会预选常用流程。');}
     else if(target.dataset.deleteTemplate){if(!confirm('删除这个规则模板？已有任务不受影响。'))return;await api('/api/templates/'+target.dataset.deleteTemplate,{method:'DELETE'});state.config=await api('/api/config');render();}
     else if(target.dataset.action==='save-template'){const name=prompt('模板名称（如“数据结构总评规则”）：',state.task.name);if(!name)return;await post(`/api/tasks/${state.task.id}/template`,{name});state.config=await api('/api/config');toast('已保存为规则模板，新建任务时可以选用。');}
     else if(target.dataset.useSuggestion!=null){const input=$('[data-k="score"]',target.closest('[data-judge]'));input.value=target.dataset.useSuggestion;input.focus();}
-    else if(target.dataset.action==='run-eval'){
-      const repeat=Number($('#eval-repeat').value||1);
-      if(!confirm(`将用当前模型运行全部 ${state.evaluation.cases.length} 个评测用例 × ${repeat} 轮，约需 ${Math.round(5*repeat)} 分钟，并产生相应的模型调用费用。继续吗？`))return;
-      await post('/api/evaluation/run',{repeat});state.evaluation=await api('/api/evaluation');render();toast('评测已开始，可以离开此页，完成后回来查看。');
-    }
-    else if(target.dataset.evalFile){state.evaluation=await api('/api/evaluation?file='+encodeURIComponent(target.dataset.evalFile));render();}
   }catch(error){toast(error.message);}
 });
 document.addEventListener('change',async event=>{
   if(event.target.matches('[data-digits]')){try{const pending=await post('/api/tasks/'+state.task.id+'/rounding',{digits:Number(event.target.value)});state.task.result.pending=pending;$('#rule-section').innerHTML=ruleSection(pending);$('#preview-section').innerHTML=previewSection(pending);toast('已改为保留 '+event.target.value+' 位小数。');}catch(error){toast(error.message);}}
+  if(event.target.matches('[data-remove-index]')){const n=$$('[data-remove-index]').filter(b=>b.checked).length,button=$('#mod-delete');if(button){button.hidden=!n;button.textContent=`删除所选（${n}）`;}}
   if(event.target.matches('[data-choice]')){const card=event.target.closest('[data-issue]'),edit=$('.row-correction',card);if(edit){edit.hidden=event.target.value!=='correct';edit.style.display=event.target.value==='correct'?'flex':'none';}}
   if(event.target.matches('[data-correct-id]')){const typed=$('[data-correct-id-text]',event.target.closest('[data-issue]'));if(typed)typed.hidden=event.target.value!=='';}
 });
@@ -778,8 +727,4 @@ setInterval(async()=>{
     else renderNav();
   }catch{}finally{polling=false;}
 },1800);
-setInterval(async()=>{
-  if(state.page!=='evaluation'||!state.evaluation?.running)return;
-  try{state.evaluation=await api('/api/evaluation');render();}catch{}
-},5000);
 start();

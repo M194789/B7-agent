@@ -85,14 +85,13 @@ def test_a_material_needing_proof_must_be_decided_before_confirming(monkeypatch)
         tid = client.post('/api/demo/appraisal', json={}).json()['id']
         pending = wait(client, tid)['result']['pending']
         proof = [m for m in pending['materials'] if m['status'] == 'needs_proof']
-        reasons = {m['file']: m['reasons'][0] for m in proof}
-        assert '没写级别' in reasons.pop('王敏_获奖证书_数学建模国赛.png')
-        assert reasons and all('多人申报' in r for r in reasons.values())  # the planted 挑战杯 project claimed by two people
+        assert [m['file'] for m in proof] == ['王敏_获奖证书_数学建模国赛.png'] and '没写级别' in proof[0]['reasons'][0]
+        shared = next(m for m in pending['materials'] if m['file'] == '李强_获奖证书_挑战杯省赛.png')
+        assert shared['status'] == 'counted' and any('团队合作时属正常' in r for r in shared['reasons'])  # two advisers of one team: both count
         judgements = {f'{p}::I1': {'score': 8} for p in ('王敏', '李强', '赵琳')}
         refused = client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements, 'scheme_answers': {'I9': 'highest'}})
         assert refused.status_code == 400 and '补充证明' in refused.json()['detail']
-        decided = {m['id']: {'accepted': True, 'note': '核对原件为国家级', 'level': '国家级'} if '数学建模' in m['file'] else
-                   {'excluded': True, 'note': '项目归王敏'} if m['file'].startswith('李强') else {} for m in proof}
+        decided = {proof[0]['id']: {'accepted': True, 'note': '核对原件为国家级', 'level': '国家级'}}
         assert client.post(f'/api/tasks/{tid}/review', json={'judgements': judgements, 'materials': decided, 'scheme_answers': {'I9': 'highest'}}).status_code == 200
         task = wait(client, tid)
         assert task['status'] == 'completed'
@@ -135,3 +134,18 @@ def test_usual_flow_skips_the_guess_and_a_template_reuses_the_confirmed_rule(mon
         assert calls['parse'] == parsed + 1  # changed rules are read again
         client.delete(f'/api/templates/{template}')
         client.post('/api/prefs', json={'identity': '', 'flow': ''})
+
+
+def test_a_finished_task_can_be_deleted_with_everything_it_kept(monkeypatch):
+    from tests.test_stage2 import FINAL, USUAL, ROSTER, csv, decide, mocked
+    from app import store
+    mocked(monkeypatch)
+    with TestClient(app) as client:
+        tid = client.post('/api/tasks', files=[csv('名单.csv', ROSTER), csv('期末.csv', FINAL), csv('平时.csv', USUAL)],
+                          data={'kind': 'grades', 'rules_text': '期末60%，平时40%，没有记录按0分。'}).json()['id']
+        decide(client, tid, wait(client, tid))
+        folder = store.DATA / 'tasks' / tid
+        assert folder.is_dir()
+        assert client.delete(f'/api/tasks/{tid}').json() == {'ok': True}
+        assert client.get(f'/api/tasks/{tid}').status_code == 404 and not folder.exists()
+        assert tid not in {t['id'] for t in client.get('/api/tasks').json()}
