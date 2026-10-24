@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import appraisal, appraisal_flow, dedupe, documents, export_xlsx, grades, intake, model, scoring, store, versions, workflow
+from . import appraisal, appraisal_flow, dedupe, documents, export_xlsx, grades, habits, intake, model, scoring, store, versions, workflow
 from . import uploads as uploads_mod
 
 pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='b7-task')
@@ -112,7 +112,8 @@ def config():
                 'qwen': {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'model': 'qwen3.8-max', 'docs': 'https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope'},
             }, 'limits': {'upload_mb': UPLOAD_MB, 'files': MAX_FILES, 'table_rows': 10000},
             'demos': {k: {'name': v['name']} for k, v in DEMOS.items()},
-            'prefs': store.pref_get('user') or {'identity': '', 'flow': ''}, 'identities': IDENTITIES,
+            'prefs': {'identity': '', 'flow': '', 'habits': True, **(store.pref_get('user') or {})}, 'identities': IDENTITIES,
+            'habits': [{k: h[k] for k in ('key', 'kind', 'label', 'count', 'at')} for h in habits.listing()],
             'templates': [{'id': t['id'], 'kind': t['kind'], 'name': t['name'], 'created_at': t['created_at'], 'text': t['payload']['text']}
                           for t in store.templates()]}
 
@@ -123,6 +124,7 @@ IDENTITIES = ['任课教师', '辅导员', '研究生导师', '教学秘书 / �
 class Prefs(BaseModel):
     identity: str = Field(default='', max_length=20)
     flow: str = Field(default='', max_length=20)
+    habits: bool = True
 
 
 @app.post('/api/prefs')
@@ -131,7 +133,7 @@ def save_prefs(value: Prefs):
     and can still be changed for any one task. The identity alone never decides the flow."""
     if value.flow not in ('', *intake.KINDS):
         raise ValueError('没有这个流程。')
-    prefs = {'identity': value.identity.strip(), 'flow': value.flow}
+    prefs = {'identity': value.identity.strip(), 'flow': value.flow, 'habits': value.habits}
     store.pref_put('user', prefs)
     return prefs
 
@@ -155,6 +157,12 @@ def save_template(task_id: str, value: TemplateName):
     else:
         payload = {'text': appraisal_flow.rules_now(task), 'scheme': {k: v for k, v in result['scheme'].items() if k != 'source_text'}}
     return {'id': store.template_put(task['kind'], value.name.strip(), payload)}
+
+
+@app.delete('/api/habits/{key}')
+def forget_habit(key: str):
+    habits.forget(key)
+    return {'ok': True}
 
 
 @app.delete('/api/templates/{template_id}')

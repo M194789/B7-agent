@@ -11,7 +11,7 @@ from typing import TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from . import appraisal, dedupe, documents, export_xlsx, grades, model, store, versions
+from . import appraisal, dedupe, documents, export_xlsx, grades, habits, model, store, versions
 from .workflow import checkpointer, trace
 
 TEXT_SUFFIXES = ('.txt', '.md')
@@ -282,6 +282,11 @@ def confirm(state):
               'materials': [m['id'] for m in materials if m['person'] == p and m['indicator'] == i['id'] and not m.get('excluded')]}
              for p in people for i in scheme['indicators'] if i['method'] == 'judge']
     by_id = {m['id']: m for m in materials}
+    indicators = {i['id']: i for i in scheme['indicators']}
+    for m in materials:
+        if m['status'] == 'needs_proof' and m.get('indicator') in indicators:
+            m['habit'] = habits.suggest_material(m, indicators[m['indicator']])
+    questions = [{**q, 'habit': habits.suggest_same_work(indicators[q['id']])} for q in dedupe.questions(scheme, relations, materials)]
     preview = results_of(state, provisional, materials)
     pending = {'stage': 'confirm', 'kind': 'appraisal', 'detected': state['request'].get('detected'), 'people': people,
                'source_text': scheme.get('source_text', ''), **scheme_view(scheme), 'materials': public(materials), 'judge': judge,
@@ -289,7 +294,7 @@ def confirm(state):
                'relations': sorted([{**r, 'pair': [dedupe.view(by_id[r['a']]), dedupe.view(by_id[r['b']])]} for r in relations if r['a'] in by_id and r['b'] in by_id],
                                    key=lambda r: ['unsure', 'check', 'certain'].index(r.get('confidence', 'certain'))),
                'confidence_words': dedupe.CONFIDENCE,
-               'questions': dedupe.questions(scheme, relations, materials), 'relation_words': dedupe.RELATIONS, 'same_work_words': dedupe.SAME_WORK,
+               'questions': questions, 'relation_words': dedupe.RELATIONS, 'same_work_words': dedupe.SAME_WORK,
                'changes': change_report(state, preview, lapsed) if state.get('baseline') else None}
     store.update(tid, step='请确认', result={'kind': 'appraisal', 'pending': pending, 'scheme': scheme,
                                              'summary': {'pending': sum(1 for m in materials if m['flags']) + sum(1 for j in judge if not j['decided']),
@@ -300,6 +305,13 @@ def confirm(state):
         store.event(tid, 'confirm', '指标已修改，按新指标重新整理材料', mode='human')
         return {'scheme': revised, 'rescan': True, 'judgements': {}}
     answers = {k: v for k, v in (response.get('scheme_answers') or {}).items() if v in dedupe.SAME_WORK}
+    for iid, policy in answers.items():
+        if iid in indicators:
+            habits.remember_same_work(indicators[iid], policy, dedupe.SAME_WORK)
+    for m in materials:
+        change = (response.get('materials') or {}).get(m['id']) or {}
+        if m['status'] == 'needs_proof' and m.get('indicator') in indicators and (change.get('accepted') or change.get('excluded')):
+            habits.remember_material(m, indicators[m['indicator']], change)
     if answers:
         scheme = {**scheme, 'indicators': [{**i, 'same_work': answers.get(i['id'], i.get('same_work', ''))} for i in scheme['indicators']]}
     relation_changes = {**(state.get('relation_changes') or {}), **{k: v for k, v in (response.get('relations') or {}).items() if v in dedupe.RELATIONS}}

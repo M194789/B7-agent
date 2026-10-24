@@ -112,7 +112,7 @@ def test_usual_flow_skips_the_guess_and_a_template_reuses_the_confirmed_rule(mon
     monkeypatch.setattr(model, 'ask_json', counting)
     rules = '期末60%，平时40%，没有记录按0分。'
     with TestClient(app) as client:
-        assert client.post('/api/prefs', json={'identity': '任课教师', 'flow': 'grades'}).json() == {'identity': '任课教师', 'flow': 'grades'}
+        assert client.post('/api/prefs', json={'identity': '任课教师', 'flow': 'grades'}).json() == {'identity': '任课教师', 'flow': 'grades', 'habits': True}
         assert client.get('/api/config').json()['prefs']['flow'] == 'grades'
         files = [csv('名单.csv', ROSTER), csv('期末.csv', FINAL), csv('平时.csv', USUAL)]
         tid = client.post('/api/tasks', files=files, data={'kind': 'grades', 'kind_source': 'pref', 'rules_text': rules}).json()['id']

@@ -135,6 +135,16 @@ def pref_put(key, payload):
         db.execute('INSERT OR REPLACE INTO prefs VALUES (?,?,?)', (key, dump(payload), now()))
 
 
+def prefs_like(prefix):
+    with connect() as db:
+        return [json.loads(r['payload']) for r in db.execute('SELECT payload FROM prefs WHERE key LIKE ?', (prefix + '%',))]
+
+
+def pref_drop(key):
+    with connect() as db:
+        db.execute('DELETE FROM prefs WHERE key=?', (key,))
+
+
 def template_put(kind, name, payload):
     template_id = uuid.uuid4().hex[:12]
     with connect() as db:

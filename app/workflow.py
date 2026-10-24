@@ -15,7 +15,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from . import documents, export_xlsx, grades, intake, model, scoring, store, understand, versions
+from . import documents, export_xlsx, grades, habits, intake, model, scoring, store, understand, versions
 from .documents import IMAGE_SUFFIXES
 OCR_INSTRUCTION = '''识别图片中的成绩、考勤或课堂记录，按图片原有的行列转成表格。返回 {"headers":["列名",...],"rows":[["单元格",...],...],"uncertain":[{"row":数据行序号从1开始,"column":"列名","reason":"原因"}],"notes":"整体说明"}。
 要求：逐字照录，不补全、不推测；学号保留前导零；勾号写成"√"；看不清的单元格写出最可能的读法并列入uncertain，完全无法辨认写空字符串并列入uncertain；
@@ -761,6 +761,11 @@ def with_twins(decisions, issues):
     return out
 
 
+def suggestion(issue):
+    """The user's own earlier way with this kind of problem first, else the obvious fix."""
+    return habits.suggest_issue(issue) or suggest_fix(issue)
+
+
 def suggest_fix(issue):
     """The obvious fix, preselected so the user can accept all at once; None where only the user can know."""
     if issue['type'] != 'row':
@@ -792,7 +797,7 @@ def confirm(state):
     decided = state.get('decided') or {}
     pending = {'stage': 'confirm', 'kind': 'grades', 'detected': request.get('detected'), 'source_text': request.get('rules_text', ''), 'course': request.get('course'),
                'failed_files': state.get('failed_files') or [], 'materials': state.get('materials') or [], 'plan': state.get('plan') or None,
-               'issues': [{**i, 'suggestion': suggest_fix(i), 'was': lapsed.get(i['id'])} for i in issues],
+               'issues': [{**i, 'suggestion': suggestion(i), 'was': lapsed.get(i['id'])} for i in issues],
                'decided': [decided[k] for k in state.get('decisions') or {} if k in decided],
                'tables': [table_assumptions(t, state['mappings'][t['id']]) for t in state['tables']],
                'summary': result['summary'], 'missing_students': result['missing_students'], 'roster_size': len(roster),
@@ -802,6 +807,9 @@ def confirm(state):
     response = interrupt(pending)
     out = {'decisions': with_twins({**state.get('decisions', {}), **(response.get('decisions') or {})}, issues)}
     by_id = {i['id']: i for i in issues}
+    for iid, choice in (response.get('decisions') or {}).items():
+        if iid in by_id:
+            habits.remember_issue(by_id[iid], choice)  # how this kind of problem was handled, offered again next time
     out['decided'] = {**decided, **{iid: {'id': iid, 'fingerprint': fingerprint(by_id[iid]), 'title': by_id[iid]['title'],
                                           'description': by_id[iid]['description'], 'label': choice_label(by_id[iid], choice), 'at': store.now()}
                                     for iid, choice in (response.get('decisions') or {}).items() if iid in by_id}}
@@ -883,7 +891,7 @@ def show_rule(task_id, rule, revision=None):
     roster = state_of(task).get('roster') or []
     rows = task['result']['rows']
     issues = [i for i in pending['issues'] if not i['title'].startswith(('等级“', '这一项应填等级'))]
-    pending['issues'] = issues + [{**i, 'suggestion': None} for i in grade_issues(rule, rows)]
+    pending['issues'] = issues + [{**i, 'suggestion': habits.suggest_issue(i)} for i in grade_issues(rule, rows)]
     pending.update(rule_view(rule, rows, roster, pending['issues'], state_of(task).get('overrides')))
     if revision:
         pending['revisions'] = pending.get('revisions', []) + [revision]
