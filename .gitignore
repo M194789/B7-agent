@@ -1,0 +1,9 @@
+.venv/
+data/
+logs/
+__pycache__/
+.pytest_cache/
+*.pid
+.env
+.venv.broken_from_old_machine/
+eval/results/

@@ -1,0 +1,52 @@
+{
+  "level": "hard",
+  "grades": {
+    "total_files": 3,
+    "file_formats": [
+      "CSV",
+      "TSV",
+      "XLSX"
+    ],
+    "boundary_test_cases": [
+      {
+        "case": "未知异构表头拦截",
+        "file": "02_第三方平台TSV_hard.tsv",
+        "behavior": "包含非预设别名表头(学员登记号, 测验总评等)，自动识别为未完成映射(incomplete mapping)，必须在Demo中进入mapping阶段进行人工或大模型语义确认"
+      },
+      {
+        "case": "极端越界负分拦截",
+        "student": "董浩",
+        "score": -15,
+        "behavior": "触发“成绩或满分无效”拦截，防止污染"
+      },
+      {
+        "case": "极端越界超分拦截",
+        "student": "冯婷",
+        "score": 150,
+        "behavior": "超过100分，触发“成绩或满分无效”拦截"
+      },
+      {
+        "case": "主键双重缺失拦截",
+        "student": "蒋文",
+        "behavior": "既缺学号又缺课程代码与名称，触发双重问题标记"
+      },
+      {
+        "case": "首尾空格与前导零保真",
+        "student": "钱博",
+        "raw_id": " 000088 ",
+        "clean_id": "000088",
+        "behavior": "前导零完好保留且三方平台成功去重(来源数3)"
+      },
+      {
+        "case": "三方多重交叉冲突与同分",
+        "student": "陶然",
+        "behavior": "TSV中81分与XLSX中87分冲突，进入待人工选择复核"
+      },
+      {
+        "case": "无课程代码仅凭课程名称对齐",
+        "student": "罗晶",
+        "behavior": "以 name:环境科学概论 作为业务键对齐"
+      }
+    ]
+  }
+}

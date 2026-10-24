@@ -1,0 +1,57 @@
+{
+  "level": "medium",
+  "grades": {
+    "input_rows": 15,
+    "duplicate_rows": 1,
+    "conflict_groups": 2,
+    "row_issues": 3,
+    "expected_conflicts": [
+      {
+        "type": "score_conflict",
+        "key": "2026-MED-05 / AI101 / 期末 / 初考",
+        "scores": [
+          78.0,
+          86.0
+        ],
+        "description": "同一考核记录成绩冲突"
+      },
+      {
+        "type": "identity_conflict",
+        "key": "003102 / AI101 / 期末 / 初考",
+        "names": [
+          "陈晨",
+          "陈亮"
+        ],
+        "description": "同一学号姓名存在差异"
+      }
+    ],
+    "expected_row_issues": [
+      {
+        "reason": "缺少学号，不能仅凭姓名归并",
+        "student": "孙雪",
+        "source": "02_机房平时成绩_medium.xlsx"
+      },
+      {
+        "reason": "成绩或满分无效（缺失不等于零分）",
+        "student": "孙浩",
+        "raw": "缺考",
+        "source": "03_考务补充记录_medium.csv"
+      },
+      {
+        "reason": "成绩或满分无效（缺失不等于零分）",
+        "student": "陆薇",
+        "raw": "作弊",
+        "source": "03_考务补充记录_medium.csv"
+      }
+    ],
+    "key_test_points": [
+      "满分折算归一化 (18/20 -> 90分, 45/50 -> 90分)",
+      "前导零学号保真 (003102)",
+      "带连字符特殊学号解析 (2026-MED-*)",
+      "多文件异构格式 (CSV + XLSX) 联合解析",
+      "跨平台成绩冲突敏锐拦截待选",
+      "学号张冠李戴（姓名冲突）敏锐拦截待查",
+      "非数字特殊考务记录安全拦截，不崩溃不静默转0"
+    ]
+  }
+}

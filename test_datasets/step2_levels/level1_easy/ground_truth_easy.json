@@ -1,0 +1,17 @@
+{
+  "level": "easy",
+  "grades": {
+    "input_rows": 18,
+    "duplicate_rows": 5,
+    "conflict_groups": 0,
+    "pending_issues": 0,
+    "output_rows": 13,
+    "students_count": 11,
+    "key_test_points": [
+      "别名自动映射 (学生编号->student_id, 科目->course_name, 得分->score)",
+      "跨平台完全同分去重并累加来源数 (李洋期末86, 陈晓期末79, 张敏期末91, 李洋[20260104]期末83, 周杰补考75)",
+      "同名不同学号严格隔离 (两位李洋: 20260101 计软 与 20260104 经管)",
+      "考核类型与批次隔离 (李洋平时vs期末, 周杰初考vs补考)"
+    ]
+  }
+}

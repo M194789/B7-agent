@@ -1,0 +1,19 @@
+{
+  "verified_at": "2026-10-21T11:51:06.224Z",
+  "scope": "grade integration only",
+  "automated_tests": {
+    "passed": 13,
+    "failed": 0
+  },
+  "graded_datasets": "smoke, easy, medium and hard script completed",
+  "browser_checks": [
+    "grade-only navigation and overview",
+    "grade upload controls",
+    "existing 18-input / 13-output grade result and export links"
+  ],
+  "visible_tasks": 3,
+  "all_visible_tasks_are_grades": true,
+  "historical_reference_task_http_status": 404,
+  "history_preserved": true,
+  "model_config_restored": true
+}

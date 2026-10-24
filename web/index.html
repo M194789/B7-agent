@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#152d43">
+  <meta name="description" content="知衡：面向教学管理的多平台考核数据自动整合与冲突复核工作台。">
+  <title>知衡 · 教学数据工作台</title>
+  <link rel="stylesheet" href="/style.css?v=4">
+  <script src="/app.js?v=4" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#new"><span class="brand-mark">衡</span><span><strong>知衡<span class="brand-dot">.</span></strong><small>教学数据工作台</small></span></a>
+    <div class="workspace-label">WORKSPACE <span>本地演示</span></div>
+    <nav id="nav" aria-label="主导航"></nav>
+    <div class="sidebar-note"><span class="note-line"></span><p>让每一份结果<br>都有迹可循。</p><small>郑州大学 AI 智能体创新应用大赛<br>B7 · 初赛原型</small></div>
+    <a class="sidebar-bottom" href="#settings"><span class="connection-dot"></span><span id="connection-label">正在连接工作台</span><span>↗</span></a>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <strong id="breadcrumb-current">新建任务</strong></div><div class="topbar-right"><span class="local-tag"><i></i> 本地工作空间</span><span class="avatar">郑</span></div></header>
+    <main id="content" aria-live="polite"><div class="loading">正在载入工作台…</div></main>
+    <footer class="app-footer"><span>知衡 · 多平台考核数据整合</span><span>原始材料 · 处理依据 · 人工确认</span></footer>
+  </div>
+  <div id="modal" class="modal-backdrop" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
