@@ -282,15 +282,16 @@ function materialRow(t,m,p) {
 }
 
 // Which materials are the same achievement: both side by side, who decided it and on what evidence; every one can be changed.
-const PAIR_FIELDS=[['cert_no','编号'],['contest','比赛'],['edition','届次'],['project','作品/题目'],['award','获奖等级'],['level','级别'],['students','学生'],['date','日期']];
+const PAIR_FIELDS=[['cert_no','编号'],['contest','比赛'],['edition','届次'],['project','作品/题目'],['award','获奖等级'],['level','级别'],['students','学生'],['advisor','指导教师'],['date','日期']];
+const CONFIDENCE_TONE={certain:'green',check:'amber',unsure:'red'};
 function relationsSection(t,p) {
   const list=p.relations||[];
   if(!list.length)return '';
   const by={rule:['程序规则',''],model:['模型判断','blue'],evaluator:['你改过','green'],none:['模型没有判断','amber']};
-  const open=list.filter(r=>r.relation==='unsure').length;
+  const open=list.filter(r=>r.relation==='unsure').length,check=list.filter(r=>r.confidence==='check').length;
   const row=r=>{const [a,b]=r.pair;return `<tr data-relation-row="${e(r.key)}"${r.relation==='unsure'?' style="background:var(--amber-soft)"':''}><td style="white-space:normal;min-width:330px"><table style="font-size:13px"><thead><tr><th></th><th>${a.index!=null?sourceLink(t,{index:a.index,file:a.file}):e(a.file)}</th><th>${b.index!=null?sourceLink(t,{index:b.index,file:b.file}):e(b.file)}</th></tr></thead><tbody>${PAIR_FIELDS.filter(([k])=>a[k]||b[k]).map(([k,l])=>`<tr><td class="muted">${l}</td><td>${e(a[k])}</td><td>${e(b[k])}</td><td>${a[k]&&b[k]?(a[k]===b[k]?'<span style="color:var(--teal)">✓</span>':'<span style="color:var(--amber)">✗</span>'):''}</td></tr>`).join('')}</tbody></table></td>
-  <td style="white-space:normal;min-width:260px"><select data-relation="${e(r.key)}" data-was="${e(r.relation)}">${Object.entries(p.relation_words).map(([k,l])=>`<option value="${k}" ${r.relation===k?'selected':''}>${e(l)}</option>`).join('')}</select><div style="margin-top:6px">${badge(...(by[r.by]||[r.by,'']))} <small>${e(r.reason)}</small></div>${quoteList(r.evidence)}</td></tr>`;};
-  return `<section class="card"><div class="card-head"><h2>可能重复的材料</h2><small class="muted">${list.length} 组 · 证据确定的由程序判断，其余由模型判断并给出原文依据，都可以改${open?` · <b style="color:var(--amber)">${open} 组需要你判断</b>`:''}</small></div><div class="table-wrap"><table><tbody>${list.map(row).join('')}</tbody></table></div></section>`;
+  <td style="white-space:normal;min-width:260px"><select data-relation="${e(r.key)}" data-was="${e(r.relation)}">${Object.entries(p.relation_words).map(([k,l])=>`<option value="${k}" ${r.relation===k?'selected':''}>${e(l)}</option>`).join('')}</select><div style="margin-top:6px">${r.confidence?badge((p.confidence_words||{})[r.confidence]||r.confidence,CONFIDENCE_TONE[r.confidence])+' ':''}${badge(...(by[r.by]||[r.by,'']))} <small>${e(r.reason)}</small></div>${(r.anchors||[]).length?`<div><small style="color:var(--teal)">程序核对一致：${r.anchors.map(e).join('；')}</small></div>`:''}${(r.conflicts||[]).length?`<div><small style="color:var(--amber)">与结论不符：${r.conflicts.map(e).join('；')}</small></div>`:''}${quoteList(r.evidence)}</td></tr>`;};
+  return `<section class="card"><div class="card-head"><h2>可能重复的材料</h2><small class="muted">${list.length} 组 · 只列出相同或有疑问的；程序用编号、年份、等级、姓名拼音核对模型的结论，都可以改${open?` · <b style="color:var(--red)">${open} 组需要你判断</b>`:''}${check?` · <b style="color:var(--amber)">${check} 组请核对</b>`:''}</small></div><div class="table-wrap"><table><tbody>${list.map(row).join('')}</tbody></table></div></section>`;
 }
 function schemeQuestions(p) {
   return (p.questions||[]).map(q=>`<section class="review-card" data-scheme-question="${e(q.id)}"><div><b>问题：</b>${e(q.question)}</div><div><b>需要：</b>${e(q.need)}</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">${Object.entries(q.options).map(([k,l])=>`<label class="check"><input type="radio" name="sq-${e(q.id)}" value="${k}"> ${e(l)}</label>`).join('')}</div></section>`).join('');

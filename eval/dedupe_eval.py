@@ -45,7 +45,7 @@ def main():
             key = '|'.join([a, b])
             want = expect.get(key, 'different')
             r = found.get(key)
-            got = r['relation'] if r else 'different'  # not even a candidate (or put under another indicator): counted apart
+            got = r['relation'] if r else 'different'  # not listed: the program and the model both found them different
             if indicator_of[a] != indicator_of[b]:
                 got = 'different'
             if got == want:
@@ -66,7 +66,12 @@ def main():
     total = len(rows)
     print(f'\n共 {total} 对：正确 {tally["correct"]}；把不同成果合并（少算分）{tally["merged_wrongly"]}；把同一成果算两次（多算分）{tally["counted_twice"]}；'
           f'同一奖项与同一作品不同奖项混淆 {tally["award_vs_work"]}；交给评分人判断 {tally["unsure"]}')
-    print('程序规则判定', sum(1 for r in relations if r['by'] == 'rule'), '对；模型判定', sum(1 for r in relations if r['by'] == 'model'), '对；候选对共', len(relations))
+    tiers = {k: sum(1 for r in relations if r.get('confidence') == k) for k in dedupe.CONFIDENCE}
+    print(f'列给评分人看的 {len(relations)} 对（其余 {total - len(relations)} 对确定是不同成果，不列出）：程序规则 {sum(1 for r in relations if r["by"] == "rule")} 对，'
+          f'模型 {sum(1 for r in relations if r["by"] == "model")} 对；确定 {tiers["certain"]}，请核对 {tiers["check"]}，必须人工判断 {tiers["unsure"]}')
+    for r in relations:
+        if r.get('confidence') != 'certain':
+            print('   需要看：', r['key'], NAMES[r['relation']], '|', '；'.join(r.get('conflicts') or []))
 
 
 if __name__ == '__main__':

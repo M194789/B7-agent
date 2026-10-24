@@ -84,10 +84,12 @@ def fake_model(instruction, payload, images=None):
         return {'indicators': [{**i, 'points': {'省级及以上': 3}} if i['id'] == 'I5' else i for i in payload['current']['indicators']]}
     if instruction == appraisal.JUDGE_INSTRUCTION:
         return {'level': '良好', 'reason': '测试', 'quotes': []}
-    if instruction == dedupe.RELATE_INSTRUCTION:  # the same title at another level: the same work awarded twice
-        found = {m['id']: m for m in payload['materials']}
-        return {'relations': [{'a': a, 'b': b, 'relation': 'same_work' if found[a]['project'] == found[b]['project'] else 'different', 'reason': '测试'}
-                              for a, b in payload['pairs']]}
+    if instruction == dedupe.GROUP_INSTRUCTION:  # one achievement per title; within it one award per level
+        works = {}
+        for c in payload['cards']:
+            works.setdefault(c['project'], {}).setdefault(c['level'], []).append(c['id'])
+        return {'achievements': [{'awards': list(levels.values()), 'reason': '测试', 'evidence': []}
+                                 for levels in works.values() if sum(len(x) for x in levels.values()) > 1]}
     name = payload['file_name']
     person = payload['filename_hint']
     for words, indicator, doc_type in [(('日志',), 'I3', '辅导员工作日志'), (('谈话',), 'I3', '谈话记录'), (('值班',), 'I3', '值班记录'),
