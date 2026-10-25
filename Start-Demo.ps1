@@ -13,7 +13,7 @@ $listenPort = 8017
 if ($env:B7_PORT) { $listenPort = [int]$env:B7_PORT }
 try {
     $existing = Invoke-RestMethod -Uri "http://127.0.0.1:$listenPort/api/health" -TimeoutSec 2
-    if ($existing.name -eq '知衡' -and $existing.status -eq 'ok') {
+    if ($existing.version -eq '0.2.0' -and $existing.status -eq 'ok') {
         Write-Host "Demo is already running: http://127.0.0.1:$listenPort"
         exit 0
     }
