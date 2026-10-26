@@ -118,9 +118,10 @@ def read_one(index, file, indicators, people, task_id=None):
     # A condition of the linked indicator the model did not answer is not taken as met.
     answered = {(c['id'], c['condition']) for c in conditions}
     conditions += [{'id': i, 'condition': c, 'met': None, 'evidence': ''} for i, c in sorted(known) if i == linked and (i, c) not in answered]
-    return {**base, 'person': person, 'doc_type': grades.text(response.get('doc_type'))[:40], 'title': grades.text(response.get('title'))[:120] or name,
+    found = {**base, 'person': person, 'doc_type': grades.text(response.get('doc_type'))[:40], 'title': grades.text(response.get('title'))[:120] or name,
             'event': grades.text(response.get('event'))[:120], 'project': grades.text(response.get('project'))[:120],
             'level': grades.text(response.get('level'))[:30], 'date': grades.text(response.get('date'))[:30],
+            **{k: grades.text(response.get(k))[:30] for k in ('issue_date', 'session', 'doc_form')},
             'role': grades.text(response.get('role'))[:60], 'conditions': conditions,
             **{k: grades.text(response.get(k))[:120] for k in ('cert_no', 'contest', 'edition', 'award', 'issuer', 'advisor')},
             'students': [grades.text(x)[:20] for x in response.get('students') or [] if grades.text(x)][:20] if isinstance(response.get('students'), list) else [],
@@ -128,6 +129,8 @@ def read_one(index, file, indicators, people, task_id=None):
             'also': [x['id'] for x in links[1:]], 'summary': grades.text(response.get('summary'))[:200],
             'quotes': quote_checks(quotes, excerpt, bool(images)),
             'uncertain': uncertain, 'excerpt': excerpt}
+    found['checks'] = appraisal.field_checks(found, excerpt, bool(images), len(excerpt) < EXCERPT)
+    return found
 
 
 def quote_checks(quotes, excerpt, has_images):
@@ -192,8 +195,8 @@ def linked_files(materials, key):
 
 def relate(state):
     tid = state['task_id']
-    found = trace(tid, 'relate', '判断哪些材料是同一成果', lambda: {'items': dedupe.relate(state['materials'], state['scheme']['indicators']),
-                                                                   '_trace': '按证书编号、比赛、作品与获奖等级核对'}, 'model')['items']
+    found = trace(tid, 'relate', '判断哪些材料是同一成果', lambda: {'items': dedupe.relate(state['materials'], state['scheme']['indicators'], explanation=state['scheme'].get('explanation', '')),
+                                                                   '_trace': '按与原文核对过的编号、作品、人员、活动日期与场次判断'}, 'model')['items']
     return {'relations': found}
 
 
